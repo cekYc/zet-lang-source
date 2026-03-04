@@ -4,8 +4,9 @@ use std::collections::HashSet;
 pub struct Codegen { 
     indent_level: usize,
     pure_functions: HashSet<String>,
-    // YENİ: Şu an hangi fonksiyondayız, o fonksiyon saf mı?
-    is_current_func_pure: bool, 
+    is_current_func_pure: bool,
+    /// Scope bloğu içinde miyiz? (spawn → _zet_handles.push)
+    in_scope: bool,
 }
 
 impl Codegen {
@@ -13,7 +14,8 @@ impl Codegen {
         Self { 
             indent_level: 0,
             pure_functions: HashSet::new(),
-            is_current_func_pure: false, 
+            is_current_func_pure: false,
+            in_scope: false,
         } 
     }
 
@@ -34,6 +36,23 @@ const YELLOW: &str = "\x1b[33m";
 const BLUE: &str = "\x1b[34m";
 const RED: &str = "\x1b[31m";
 
+/// Zet v0.2 — Untrusted: Dış dünyadan gelen lekeli veri sarmalayıcısı.
+/// Bu struct doğrudan String gibi kullanılamaz. validate() ile temizlenmelidir.
+#[derive(Clone, Debug)]
+struct Untrusted(String);
+
+impl Untrusted {
+    /// Veriyi doğrular. Boş veya sadece boşluktan oluşan girdi reddedilir.
+    fn validate(self) -> Result<String, String> {
+        let s = self.0.trim().to_string();
+        if s.is_empty() {
+            Err("Dogrulama basarisiz: bos girdi.".to_string())
+        } else {
+            Ok(s)
+        }
+    }
+}
+
 struct DB;
 impl DB {
     async fn log<T: std::fmt::Display>(msg: T) { println!("  {}[DB] Log: {}{}", CYAN, msg, RESET); }
@@ -41,12 +60,12 @@ impl DB {
 
 struct Console;
 impl Console {
-    async fn read(prompt: String) -> String {
-        print!("  {}[Console]  {}: {} ", BLUE, prompt, RESET);
+    async fn read(prompt: String) -> Untrusted {
+        print!("  {}[Console] {}: {}", BLUE, prompt, RESET);
         io::stdout().flush().unwrap();
         let mut buffer = String::new();
         io::stdin().read_line(&mut buffer).unwrap();
-        buffer.trim().to_string()
+        Untrusted(buffer.trim().to_string())
     }
 }
 
@@ -65,31 +84,26 @@ impl Util {
 
 struct HTTP;
 impl HTTP {
-    async fn get(url: String) -> String {
-        let client = reqwest::Client::builder().user_agent("GojoLang/1.0").build().unwrap();
+    async fn get(url: String) -> Untrusted {
+        let client = reqwest::Client::builder().user_agent("ZetLang/0.2").build().unwrap();
         match client.get(&url).send().await {
-            Ok(res) => res.text().await.unwrap_or_else(|e| format!("Error: {}", e)),
-            Err(e) => format!("Error: {}", e)
+            Ok(res) => Untrusted(res.text().await.unwrap_or_else(|e| format!("Error: {}", e))),
+            Err(e) => Untrusted(format!("Error: {}", e))
         }
     }
 }
 
-trait Validate { fn validate(&self) -> Result<String, String>; }
-impl Validate for String {
-    fn validate(&self) -> Result<String, String> { Ok(self.clone()) }
-}
-
 // TRAITLER (Inline optimize edildi)
-trait GojoAdd<Rhs> { type Output; fn g_add(self, rhs: Rhs) -> Self::Output; }
-impl GojoAdd<i64> for i64 { type Output = i64; #[inline(always)] fn g_add(self, rhs: i64) -> i64 { self + rhs } }
-impl GojoAdd<String> for String { type Output = String; #[inline(always)] fn g_add(self, rhs: String) -> String { self + &rhs } }
-impl<'a> GojoAdd<&'a str> for String { type Output = String; #[inline(always)] fn g_add(self, rhs: &'a str) -> String { self + rhs } }
-impl GojoAdd<i64> for String { type Output = String; #[inline(always)] fn g_add(self, rhs: i64) -> String { format!("{}{}", self, rhs) } }
+trait ZetAdd<Rhs> { type Output; fn z_add(self, rhs: Rhs) -> Self::Output; }
+impl ZetAdd<i64> for i64 { type Output = i64; #[inline(always)] fn z_add(self, rhs: i64) -> i64 { self + rhs } }
+impl ZetAdd<String> for String { type Output = String; #[inline(always)] fn z_add(self, rhs: String) -> String { self + &rhs } }
+impl<'a> ZetAdd<&'a str> for String { type Output = String; #[inline(always)] fn z_add(self, rhs: &'a str) -> String { self + rhs } }
+impl ZetAdd<i64> for String { type Output = String; #[inline(always)] fn z_add(self, rhs: i64) -> String { format!("{}{}", self, rhs) } }
 
-trait GojoMul<Rhs> { type Output; fn g_mul(self, rhs: Rhs) -> Self::Output; }
-impl GojoMul<i64> for i64 { type Output = i64; #[inline(always)] fn g_mul(self, rhs: i64) -> i64 { self * rhs } }
-impl GojoMul<i64> for String { type Output = String; fn g_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
-impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
+trait ZetMul<Rhs> { type Output; fn z_mul(self, rhs: Rhs) -> Self::Output; }
+impl ZetMul<i64> for i64 { type Output = i64; #[inline(always)] fn z_mul(self, rhs: i64) -> i64 { self * rhs } }
+impl ZetMul<i64> for String { type Output = String; fn z_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
+impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
 "#.to_string()
     }
 
@@ -121,7 +135,7 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
         
         let async_keyword = if is_pure { "" } else { "async " };
 
-        let mut code = format!("pub {}fn {}({}) -> {} {{\n", async_keyword, real_func_name, params, self.map_type(&func.return_type));
+        let mut code = format!("{}fn {}({}) -> {} {{\n", async_keyword, real_func_name, params, self.map_type(&func.return_type));
         self.indent_level += 1;
         code.push_str(&self.generate_block(&func.body));
         self.indent_level -= 1;
@@ -130,7 +144,10 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
     }
 
     fn generate_main_shim(&self) -> String {
-        r#"#[tokio::main] async fn main() { user_main("Internet".to_string()).await; tokio::time::sleep(std::time::Duration::from_millis(100)).await; }"#.to_string()
+        r#"#[tokio::main] async fn main() {
+    let _zet_input = Untrusted(std::env::args().skip(1).collect::<Vec<_>>().join(" "));
+    user_main(_zet_input).await;
+}"#.to_string()
     }
 
     fn generate_block(&mut self, block: &Block) -> String {
@@ -157,17 +174,17 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
                 let step_expr = if let Some(s) = step { self.generate_expr(s) } else { "1".to_string() };
                 let mut s = format!("{}{{\n", indent); 
                 s.push_str(&format!("{}let mut {} = {};\n", self.indent(), var, self.generate_expr(start)));
-                s.push_str(&format!("{}let _gojo_end = {};\n", self.indent(), self.generate_expr(end)));
-                s.push_str(&format!("{}let _gojo_step = {};\n", self.indent(), step_expr));
-                s.push_str(&format!("{}while (_gojo_step > 0 && {} < _gojo_end) || (_gojo_step < 0 && {} > _gojo_end) {{\n", self.indent(), var, var));
+                s.push_str(&format!("{}let _zet_end = {};\n", self.indent(), self.generate_expr(end)));
+                s.push_str(&format!("{}let _zet_step = {};\n", self.indent(), step_expr));
+                s.push_str(&format!("{}while (_zet_step > 0 && {} < _zet_end) || (_zet_step < 0 && {} > _zet_end) {{\n", self.indent(), var, var));
                 self.indent_level += 1;
                 s.push_str(&self.generate_block(body));
                 
                 // For döngüsü optimizasyonu
                 if self.is_current_func_pure {
-                     s.push_str(&format!("{}{} += _gojo_step;\n", self.indent(), var));
+                     s.push_str(&format!("{}{} += _zet_step;\n", self.indent(), var));
                 } else {
-                     s.push_str(&format!("{}{} = {}.g_add(_gojo_step);\n", self.indent(), var, var));
+                     s.push_str(&format!("{}{} = {}.z_add(_zet_step);\n", self.indent(), var, var));
                 }
                 
                 self.indent_level -= 1;
@@ -194,15 +211,42 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
             Statement::ScopeBlock { name, body } => {
                 let mut s = format!("{}// Scope: {}\n{}{{\n", indent, name, indent);
                 self.indent_level += 1;
+                let inner_indent = self.indent();
+                s.push_str(&format!("{}let mut _zet_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();\n", inner_indent));
+                
+                let was_in_scope = self.in_scope;
+                self.in_scope = true;
                 s.push_str(&self.generate_block(body));
-                s.push_str(&format!("{}tokio::time::sleep(Duration::from_millis(50)).await;\n", self.indent()));
+                self.in_scope = was_in_scope;
+                
+                // Tüm görevlerin bitmesini bekle — zombie süreç yok!
+                s.push_str(&format!("{}for _h in _zet_handles {{ _h.await.ok(); }}\n", inner_indent));
                 self.indent_level -= 1;
                 s.push_str(&format!("{}}}\n", indent));
                 s
             }
-            Statement::ValidateBlock { target, success_scope, .. } => {
-                let mut s = format!("{}let {} = {}.validate().unwrap();\n", indent, target, target);
+            Statement::ValidateBlock { target, success_scope, on_fail, .. } => {
+                let mut s = format!("{}match {}.validate() {{\n", indent, target);
+                self.indent_level += 1;
+                let inner = self.indent();
+                // Success: target artık temiz String
+                s.push_str(&format!("{}Ok({}) => {{\n", inner, target));
+                self.indent_level += 1;
                 s.push_str(&self.generate_block(success_scope));
+                self.indent_level -= 1;
+                s.push_str(&format!("{}}}\n", inner));
+                // Fail: hata durumu
+                s.push_str(&format!("{}Err(_zet_err) => {{\n", inner));
+                self.indent_level += 1;
+                if on_fail.statements.is_empty() {
+                    s.push_str(&format!("{}eprintln!(\"  {{}}[VALIDATE FAIL] {{}}{{}}\", RED, _zet_err, RESET);\n", self.indent()));
+                } else {
+                    s.push_str(&self.generate_block(on_fail));
+                }
+                self.indent_level -= 1;
+                s.push_str(&format!("{}}}\n", inner));
+                self.indent_level -= 1;
+                s.push_str(&format!("{}}}\n", indent));
                 s
             }
             Statement::Return(Some(e)) => format!("{}return {};\n", indent, self.generate_expr(e)),
@@ -251,8 +295,8 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
                     format!("({} {} {})", self.generate_expr(left), op_str, self.generate_expr(right))
                 } else {
                     match op {
-                        BinaryOp::Add => format!("{}.g_add({})", self.generate_expr(left), self.generate_expr(right)),
-                        BinaryOp::Mul => format!("{}.g_mul({})", self.generate_expr(left), self.generate_expr(right)),
+                        BinaryOp::Add => format!("{}.z_add({})", self.generate_expr(left), self.generate_expr(right)),
+                        BinaryOp::Mul => format!("{}.z_mul({})", self.generate_expr(left), self.generate_expr(right)),
                         _ => {
                              let op_str = match op { 
                                  BinaryOp::Sub => "-", BinaryOp::Div => "/",
@@ -266,11 +310,17 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
                     }
                 }
             },
-            Expr::Call(n, a) => {
+            Expr::Call(n, a, _awaited) => {
                 let await_suffix = if self.pure_functions.contains(n) { "" } else { ".await" };
                 format!("{}({}){}", n.replace(".", "::"), a.iter().map(|x| self.generate_expr(x)).collect::<Vec<_>>().join(", "), await_suffix)
             },
-            Expr::Spawn(e) => format!("tokio::spawn(async move {{ {} }})", self.generate_expr(e)),
+            Expr::Spawn(e) => {
+                if self.in_scope {
+                    format!("_zet_handles.push(tokio::spawn(async move {{ {} }}))", self.generate_expr(e))
+                } else {
+                    format!("tokio::spawn(async move {{ {} }})", self.generate_expr(e))
+                }
+            },
             Expr::Await(e) => format!("{}.await", self.generate_expr(e)),
         }
     }
@@ -280,6 +330,7 @@ impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i6
             TypeRef::Void => "()".to_string(), 
             TypeRef::Integer => "i64".to_string(), 
             TypeRef::String => "String".to_string(),
+            TypeRef::Untrusted => "Untrusted".to_string(),
             TypeRef::Array(inner) => format!("Vec<{}>", self.map_type(inner)),
             _ => "String".to_string() 
         } 

@@ -12,7 +12,7 @@ nondeterministic fn main(girdi: Untrusted) -> Void {
         success: {
             scope Benchmark {
                 let n = 40
-                spawn DB.log("Gojo: fib(" + n + ") hesaplaniyor...")
+                spawn DB.log("Zet: fib(" + n + ") hesaplaniyor...")
 
                 let start = call Util.now()               
                 let sonuc = fib(n)             

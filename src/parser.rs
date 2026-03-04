@@ -70,7 +70,7 @@ fn parse_call_expr(input: &str) -> IResult<&str, Expr> {
         ws(char('(')), 
         separated_list0(ws(char(',')), parse_expr), 
         ws(char(')'))
-    )), |(_, n, _, a, _)| Expr::Call(n, a))(input)
+    )), |(call_kw, n, _, a, _)| Expr::Call(n, a, call_kw.is_some()))(input)
 }
 
 fn parse_primary(input: &str) -> IResult<&str, Expr> {

@@ -15,7 +15,7 @@ fn main() {
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        println!("Kullanim: gojo <dosya.gojo>");
+        println!("Kullanim: zet <dosya.zt>");
         return;
     }
 
@@ -37,7 +37,7 @@ fn main() {
             return;
         }
     };
-    println!("Parser: {} fonksiyon bulundu.", functions.len());
+    println!("[Zet Parser] {} fonksiyon bulundu.", functions.len());
 
     // Sembol tablosunu hazırla (Tüm fonksiyonları kaydet)
     let mut func_map = HashMap::new();
@@ -48,10 +48,10 @@ fn main() {
 
     // 2. GÜVENLİK (Tüm fonksiyonları tek tek tara)
     for func in &functions {
-        if let Err(e) = DeterminismAnalyzer::check(func, &symbols) { println!("DETERMINISM HATASI ({}): {}", func.name, e); return; }
-        if let Err(e) = TaintAnalyzer::check(func) { println!("TAINT HATASI ({}): {}", func.name, e); return; }
+        if let Err(e) = DeterminismAnalyzer::check(func, &symbols) { println!("[ZET HATA] Determinizm ({}): {}", func.name, e); return; }
+        if let Err(e) = TaintAnalyzer::check(func) { println!("[ZET HATA] Taint ({}): {}", func.name, e); return; }
         let mut scope_pass = ScopeAnalyzer::new();
-        if let Err(e) = scope_pass.analyze(func) { println!("SCOPE HATASI ({}): {}", func.name, e); return; }
+        if let Err(e) = scope_pass.analyze(func) { println!("[ZET HATA] Scope ({}): {}", func.name, e); return; }
     }
 
     // 3. CODEGEN (Listeyi gönder)
@@ -64,15 +64,25 @@ fn main() {
          return;
     }
 
-    println!("Derleniyor ve Çalıştırılıyor...");
+    println!("[Zet v0.2] Derleniyor ve Çalıştırılıyor...");
     
-    let status = Command::new("cargo")
-        .arg("run")
+    // Kullanıcının ek argümanlarını derlenen programa ilet
+    // Kullanım: zet dosya.zt arg1 arg2 ...
+    let user_args: Vec<String> = args[2..].to_vec();
+    
+    let mut cmd = Command::new("cargo");
+    cmd.arg("run")
         .arg("--release")
         .arg("--quiet")
         .arg("--bin") 
-        .arg("app")   
-        .status();
+        .arg("app")
+        .arg("--");
+    
+    for arg in &user_args {
+        cmd.arg(arg);
+    }
+    
+    let status = cmd.status();
 
     match status {
         Ok(s) if s.success() => println!(""),

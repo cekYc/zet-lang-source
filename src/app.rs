@@ -12,6 +12,23 @@ const YELLOW: &str = "\x1b[33m";
 const BLUE: &str = "\x1b[34m";
 const RED: &str = "\x1b[31m";
 
+/// Zet v0.2 — Untrusted: Dış dünyadan gelen lekeli veri sarmalayıcısı.
+/// Bu struct doğrudan String gibi kullanılamaz. validate() ile temizlenmelidir.
+#[derive(Clone, Debug)]
+struct Untrusted(String);
+
+impl Untrusted {
+    /// Veriyi doğrular. Boş veya sadece boşluktan oluşan girdi reddedilir.
+    fn validate(self) -> Result<String, String> {
+        let s = self.0.trim().to_string();
+        if s.is_empty() {
+            Err("Dogrulama basarisiz: bos girdi.".to_string())
+        } else {
+            Ok(s)
+        }
+    }
+}
+
 struct DB;
 impl DB {
     async fn log<T: std::fmt::Display>(msg: T) { println!("  {}[DB] Log: {}{}", CYAN, msg, RESET); }
@@ -19,12 +36,12 @@ impl DB {
 
 struct Console;
 impl Console {
-    async fn read(prompt: String) -> String {
-        print!("  {}[Console] 👂 {}: {} ", BLUE, prompt, RESET);
+    async fn read(prompt: String) -> Untrusted {
+        print!("  {}[Console] {}: {}", BLUE, prompt, RESET);
         io::stdout().flush().unwrap();
         let mut buffer = String::new();
         io::stdin().read_line(&mut buffer).unwrap();
-        buffer.trim().to_string()
+        Untrusted(buffer.trim().to_string())
     }
 }
 
@@ -43,32 +60,27 @@ impl Util {
 
 struct HTTP;
 impl HTTP {
-    async fn get(url: String) -> String {
-        let client = reqwest::Client::builder().user_agent("GojoLang/1.0").build().unwrap();
+    async fn get(url: String) -> Untrusted {
+        let client = reqwest::Client::builder().user_agent("ZetLang/0.2").build().unwrap();
         match client.get(&url).send().await {
-            Ok(res) => res.text().await.unwrap_or_else(|e| format!("Error: {}", e)),
-            Err(e) => format!("Error: {}", e)
+            Ok(res) => Untrusted(res.text().await.unwrap_or_else(|e| format!("Error: {}", e))),
+            Err(e) => Untrusted(format!("Error: {}", e))
         }
     }
 }
 
-trait Validate { fn validate(&self) -> Result<String, String>; }
-impl Validate for String {
-    fn validate(&self) -> Result<String, String> { Ok(self.clone()) }
-}
-
 // TRAITLER (Inline optimize edildi)
-trait GojoAdd<Rhs> { type Output; fn g_add(self, rhs: Rhs) -> Self::Output; }
-impl GojoAdd<i64> for i64 { type Output = i64; #[inline(always)] fn g_add(self, rhs: i64) -> i64 { self + rhs } }
-impl GojoAdd<String> for String { type Output = String; #[inline(always)] fn g_add(self, rhs: String) -> String { self + &rhs } }
-impl<'a> GojoAdd<&'a str> for String { type Output = String; #[inline(always)] fn g_add(self, rhs: &'a str) -> String { self + rhs } }
-impl GojoAdd<i64> for String { type Output = String; #[inline(always)] fn g_add(self, rhs: i64) -> String { format!("{}{}", self, rhs) } }
+trait ZetAdd<Rhs> { type Output; fn z_add(self, rhs: Rhs) -> Self::Output; }
+impl ZetAdd<i64> for i64 { type Output = i64; #[inline(always)] fn z_add(self, rhs: i64) -> i64 { self + rhs } }
+impl ZetAdd<String> for String { type Output = String; #[inline(always)] fn z_add(self, rhs: String) -> String { self + &rhs } }
+impl<'a> ZetAdd<&'a str> for String { type Output = String; #[inline(always)] fn z_add(self, rhs: &'a str) -> String { self + rhs } }
+impl ZetAdd<i64> for String { type Output = String; #[inline(always)] fn z_add(self, rhs: i64) -> String { format!("{}{}", self, rhs) } }
 
-trait GojoMul<Rhs> { type Output; fn g_mul(self, rhs: Rhs) -> Self::Output; }
-impl GojoMul<i64> for i64 { type Output = i64; #[inline(always)] fn g_mul(self, rhs: i64) -> i64 { self * rhs } }
-impl GojoMul<i64> for String { type Output = String; fn g_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
-impl<'a> GojoMul<i64> for &'a str { type Output = String; fn g_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
-pub fn fib(n: i64) -> i64 {
+trait ZetMul<Rhs> { type Output; fn z_mul(self, rhs: Rhs) -> Self::Output; }
+impl ZetMul<i64> for i64 { type Output = i64; #[inline(always)] fn z_mul(self, rhs: i64) -> i64 { self * rhs } }
+impl ZetMul<i64> for String { type Output = String; fn z_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
+impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
+fn fib(n: i64) -> i64 {
     if (n <= 1) {
         return n;
     }
@@ -77,19 +89,29 @@ pub fn fib(n: i64) -> i64 {
     return (a + b);
 }
 
-pub async fn user_main(girdi: String) -> () {
-    let girdi = girdi.validate().unwrap();
-    // Scope: Benchmark
-    {
-        let mut n = 40;
-        tokio::spawn(async move { DB::log("Gojo: fib(".to_string().g_add(n).g_add(") hesaplaniyor...".to_string())).await });
-        let mut start = Util::now().await;
-        let mut sonuc = fib(n);
-        let mut end = Util::now().await;
-        tokio::spawn(async move { DB::log("Sonuc: ".to_string().g_add(sonuc)).await });
-        tokio::spawn(async move { DB::log("Gecen Sure: ".to_string().g_add((end - start)).g_add(" ms".to_string())).await });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+async fn user_main(girdi: Untrusted) -> () {
+    match girdi.validate() {
+        Ok(girdi) => {
+            // Scope: Benchmark
+            {
+                let mut _zet_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+                let mut n = 40;
+                _zet_handles.push(tokio::spawn(async move { DB::log("Zet: fib(".to_string().z_add(n).z_add(") hesaplaniyor...".to_string())).await }));
+                let mut start = Util::now().await;
+                let mut sonuc = fib(n);
+                let mut end = Util::now().await;
+                _zet_handles.push(tokio::spawn(async move { DB::log("Sonuc: ".to_string().z_add(sonuc)).await }));
+                _zet_handles.push(tokio::spawn(async move { DB::log("Gecen Sure: ".to_string().z_add((end - start)).z_add(" ms".to_string())).await }));
+                for _h in _zet_handles { _h.await.ok(); }
+            }
+        }
+        Err(_zet_err) => {
+            eprintln!("  {}[VALIDATE FAIL] {}{}", RED, _zet_err, RESET);
+        }
     }
 }
 
-#[tokio::main] async fn main() { user_main("Internet".to_string()).await; tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+#[tokio::main] async fn main() {
+    let _zet_input = Untrusted(std::env::args().skip(1).collect::<Vec<_>>().join(" "));
+    user_main(_zet_input).await;
+}

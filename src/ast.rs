@@ -46,7 +46,8 @@ pub enum Expr {
     Identifier(String),
     Literal(Literal),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
-    Call(String, Vec<Expr>),
+    /// Call(name, args, awaited) — awaited = `call` keyword kullanıldı mı
+    Call(String, Vec<Expr>, bool),
     Spawn(Box<Expr>),
     Await(Box<Expr>),
     Infra(InfraCall),

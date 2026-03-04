@@ -1,11 +1,11 @@
 [package]
-name = "gojo-runtime"
-version = "0.1.0"
+name = "zet-runtime"
+version = "0.2.0"
 edition = "2021"
 
 
 [[bin]]
-name = "gojo-compiler"
+name = "zet-compiler"
 path = "src/main.rs"
 
 [[bin]]
