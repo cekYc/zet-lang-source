@@ -1,4 +1,4 @@
-deterministic fn fib(n: i64) -> i64 {
+det fn fib(n: i64) -> i64 {
     if n <= 1 {
         return n
     } 
@@ -7,19 +7,19 @@ deterministic fn fib(n: i64) -> i64 {
     return a + b
 }
 
-nondeterministic fn main(girdi: Untrusted) -> Void {
+nondet fn main(girdi: Untrusted) -> Void {
     validate girdi {
         success: {
             scope Benchmark {
                 let n = 40
-                spawn DB.log("Zet: fib(" + n + ") hesaplaniyor...")
+                println("Zet: fib(" + n + ") hesaplaniyor...")
 
                 let start = call Util.now()               
                 let sonuc = fib(n)             
                 let end = call Util.now()           
                 
-                spawn DB.log("Sonuc: " + sonuc)
-                spawn DB.log("Gecen Sure: " + (end - start) + " ms")
+                println("Sonuc: " + sonuc)
+                println("Gecen Sure: " + (end - start) + " ms")
             }
         }
     }

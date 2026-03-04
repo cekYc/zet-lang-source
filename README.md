@@ -48,24 +48,22 @@ db.execute(f"SELECT * FROM users WHERE name = '{user_input}'")  # 💀 SQL Injec
 In Zet, **this doesn't compile:**
 
 ```zet
-nondeterministic fn main() -> Void {
+nondet fn main() -> Void {
     let query = call Console.read("Enter query: ")  // type: Untrusted
-    spawn DB.log(query)  // ❌ COMPILE ERROR: tainted variable 'query' used without validation
+    println(query)  // ❌ COMPILE ERROR: tainted variable 'query' used without validation
 }
 ```
 
 You're forced to validate first:
 
 ```zet
-nondeterministic fn main() -> Void {
+nondet fn main() -> Void {
     let query = call Console.read("Enter query: ")
 
     validate query {
         success: {
             // 'query' is now a trusted String — safe to use
-            scope Logging {
-                spawn DB.log("User said: " + query)
-            }
+            println("User said: " + query)
         }
     }
 }
@@ -79,7 +77,7 @@ This isn't a linter warning. It's not a "best practice." **The compiler won't pr
 |--------|--------------|:---:|
 | 🔒 **Zero Trust** | All external data is `Untrusted`. Must `validate` before use. | ✅ |
 | ⚡ **Native Speed** | No VM, no GC. Compiles to optimized machine code via Rust. | — |
-| 🧠 **Smart Engine** | `deterministic` fns get pure codegen; `nondeterministic` gets async. Mixing them is an error. | ✅ |
+| 🧠 **Smart Engine** | `det` fns get pure codegen; `nondet` gets async. Mixing them is an error. | ✅ |
 | 🧵 **Structured Concurrency** | `spawn` only works inside `scope` blocks. No zombie threads. Ever. | ✅ |
 
 ---
@@ -104,10 +102,8 @@ cargo build --release --bin zet-compiler
 
 Create `hello.zt`:
 ```zet
-nondeterministic fn main() -> Void {
-    scope Main {
-        spawn DB.log("Hello from Zet!")
-    }
+nondet fn main() -> Void {
+    println("Hello from Zet!")
 }
 ```
 
@@ -119,7 +115,7 @@ zet hello.zt
 Output:
 ```
 [Zet Parser] 1 fonksiyon bulundu.
-[ZET] Hello from Zet!
+Hello from Zet!
 ```
 
 ---
@@ -143,33 +139,34 @@ let first = scores[0]
 | `Untrusted` | Tainted external data — cannot be used without `validate` |
 | `Void` | No return value |
 
-### Functions: Deterministic vs Nondeterministic
+### Functions: `det` vs `nondet`
 
 Zet forces you to declare your function's purity. The compiler verifies it — and rejects violations:
 
 ```zet
-// Pure function — CPU & memory only. I/O here = compile error.
-deterministic fn fibonacci(n: i64) -> i64 {
+// Pure function — CPU & memory only. Async I/O here = compile error.
+det fn fibonacci(n: i64) -> i64 {
     if n <= 1 { return n }
+    println("Computing...")  // print/println are allowed in det functions
     return fibonacci(n - 1) + fibonacci(n - 2)
 }
 
-// Impure function — networking, I/O, side effects.
-nondeterministic fn fetch_data() -> Void {
+// Impure function — networking, async I/O, side effects.
+nondet fn fetch_data() -> Void {
     let response = call HTTP.get("https://api.example.com/data")
     validate response {
         success: {
-            scope DataPipeline {
-                spawn DB.log("Got: " + response)
-            }
+            println("Got: " + response)
         }
     }
 }
 ```
 
+> You can also write `deterministic` / `nondeterministic` in full — both forms are accepted.
+
 **Rejected at compile time:**
-- I/O calls (`HTTP.get`, `Console.read`, `DB.log`) inside a `deterministic` function
-- `call` keyword on a `deterministic` function (pure functions don't need async)
+- Async I/O calls (`HTTP.get`, `Console.read`) inside a `det` function
+- `call` keyword on a `det` function (pure functions don't need async)
 
 ### Taint Analysis (Zero Trust in Action)
 
@@ -185,9 +182,7 @@ let data = call HTTP.get("https://...")        // type: Untrusted
 validate input {
     success: {
         // 'input' is now a clean String — taint removed
-        scope Work {
-            spawn DB.log("Hello, " + input)
-        }
+        println("Hello, " + input)
     }
 }
 ```
@@ -197,18 +192,15 @@ Taint **propagates** — deriving a value from tainted data (JSON parsing, index
 ### Structured Concurrency
 
 ```zet
-nondeterministic fn main() -> Void {
+nondet fn main() -> Void {
     scope Network {
         spawn HTTP.get("https://api-1.com")
         spawn HTTP.get("https://api-2.com")
-        spawn DB.log("Both requests fired")
     }
     // Execution reaches here ONLY after ALL spawns in 'Network' have completed.
     // No dangling threads. No fire-and-forget. No zombies.
 
-    scope Analytics {
-        spawn DB.log("All network calls done.")
-    }
+    println("All network calls done.")
 }
 ```
 
@@ -224,7 +216,7 @@ let page = call HTTP.get("https://...")  // async under the hood
 let n = call Util.to_int("42")           // string → i64
 ```
 
-Using `call` on a `deterministic` function is a compile error — pure functions don't need async machinery.
+Using `call` on a `det` function is a compile error — pure functions don't need async machinery.
 
 ---
 
@@ -250,9 +242,10 @@ Using `call` on a `deterministic` function is a compile error — pure functions
 
 | Module | Function | Returns | Description |
 |--------|----------|---------|-------------|
+| **Built-in** | `print(value)` | `Void` | Print to stdout (no newline) |
+| **Built-in** | `println(value)` | `Void` | Print to stdout (with newline) |
 | **Console** | `call Console.read(prompt)` | `Untrusted` | Read user input from terminal |
 | **HTTP** | `call HTTP.get(url)` | `Untrusted` | Async HTTP GET request |
-| **DB** | `spawn DB.log(message)` | `Void` | Print formatted log to stdout |
 | **Util** | `call Util.now()` | `i64` | Current Unix timestamp in ms |
 | **Util** | `call Util.to_int(s)` | `i64` | Parse string to integer |
 | — | `json(data, key)` | `String` | Extract a field from JSON text |

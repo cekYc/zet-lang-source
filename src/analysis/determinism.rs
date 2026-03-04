@@ -11,14 +11,18 @@ pub struct SymbolTable { pub functions: HashMap<String, FunctionDef> }
 /// Kurallar:
 /// 1. `deterministic` fonksiyon içinde `spawn`, `Infra`, `Await` kullanılamaz.
 /// 2. `deterministic` fonksiyon, `nondeterministic` bir fonksiyonu ÇAĞIRAMAZ.
-/// 3. Stdlib'deki bilinen I/O fonksiyonları (DB.log, Console.read, HTTP.get, Util.now, Util.to_int)
+/// 3. Stdlib'deki bilinen I/O fonksiyonları (Console.read, HTTP.get, Util.now, Util.to_int)
 ///    saf fonksiyonlardan çağrılamaz.
 /// 4. `call` anahtar kelimesi yalnızca nondeterministic fonksiyon/çağrı için kullanılabilir.
-///    Saf fonksiyon çağrısına `call` eklemek hatadır.
+///    Saf fonksiyon çağrısına `call` eklemek hatasıdır.
+/// 5. `print`/`println` senkron I/O'dur ve tüm fonksiyon tiplerinde kullanılabilir.
 
 const NONDETERMINISTIC_STDLIB: &[&str] = &[
-    "DB.log", "Console.read", "HTTP.get", "Util.now", "Util.to_int"
+    "Console.read", "HTTP.get", "Util.now", "Util.to_int"
 ];
+
+/// print/println senkron çıktı fonksiyonlarıdır. Deterministic fonksiyonlarda da kullanılabilir.
+const SYNC_BUILTINS: &[&str] = &["print", "println"];
 
 pub struct DeterminismAnalyzer;
 
@@ -75,6 +79,10 @@ impl DeterminismAnalyzer {
             Expr::Literal(_) | Expr::Identifier(_) => true,
             Expr::Binary(l, _, r) => Self::is_expr_pure(l, symbols) && Self::is_expr_pure(r, symbols),
             Expr::Call(name, args, _) => {
+                // Sync builtins (print/println) are allowed in pure functions
+                if SYNC_BUILTINS.contains(&name.as_str()) {
+                    return args.iter().all(|a| Self::is_expr_pure(a, symbols));
+                }
                 // Kural 3: Stdlib I/O fonksiyonları saf değildir
                 if NONDETERMINISTIC_STDLIB.contains(&name.as_str()) {
                     return false;
@@ -138,6 +146,12 @@ impl DeterminismAnalyzer {
     fn check_call_in_expr(expr: &Expr, symbols: &SymbolTable) -> Result<(), String> {
         match expr {
             Expr::Call(name, args, awaited) => {
+                // Sync builtins don't need call keyword
+                if SYNC_BUILTINS.contains(&name.as_str()) {
+                    for arg in args { Self::check_call_in_expr(arg, symbols)?; }
+                    return Ok(());
+                }
+                
                 let is_nondet = NONDETERMINISTIC_STDLIB.contains(&name.as_str())
                     || symbols.functions.get(name).map(|f| matches!(f.purity, Purity::Nondeterministic)).unwrap_or(false);
 

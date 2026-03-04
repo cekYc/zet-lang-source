@@ -30,7 +30,7 @@ fn parse_array_literal(input: &str) -> IResult<&str, Expr> {
 fn identifier(input: &str) -> IResult<&str, String> {
     verify(
         map(recognize(pair(alt((alpha1, tag("_"))), take_while(|c: char| c.is_alphanumeric() || c == '_'))), |s: &str| s.to_string()),
-        |s: &String| !["if", "else", "let", "while", "for", "in", "by", "scope", "spawn", "call", "json", "validate", "true", "false", "return", "nondeterministic", "deterministic", "fn", "Untrusted", "i64", "Void"].contains(&s.as_str())
+        |s: &String| !["if", "else", "let", "while", "for", "in", "by", "scope", "spawn", "call", "json", "validate", "true", "false", "return", "nondeterministic", "deterministic", "nondet", "det", "fn", "Untrusted", "i64", "Void", "print", "println"].contains(&s.as_str())
     )(input)
 }
 
@@ -78,6 +78,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_spawn,
         parse_infra_expr, 
         parse_json_field,
+        parse_print,
         parse_call_expr,  
         parse_array_literal, // YENİ: Liste
         map(number, |n| Expr::Literal(Literal::Int(n))),
@@ -206,9 +207,24 @@ fn parse_type(input: &str) -> IResult<&str, TypeRef> {
     )))(input)
 }
 
+fn parse_print(input: &str) -> IResult<&str, Expr> {
+    map(tuple((
+        ws(alt((tag("println"), tag("print")))),
+        ws(char('(')),
+        separated_list0(ws(char(',')), parse_expr),
+        ws(char(')'))
+    )), |(keyword, _, args, _)| {
+        let name = if keyword == "println" { "println".to_string() } else { "print".to_string() };
+        Expr::Call(name, args, false)
+    })(input)
+}
+
 fn parse_function(input: &str) -> IResult<&str, FunctionDef> {
     map(tuple((
-        ws(alt((map(tag("deterministic"), |_| Purity::Deterministic), map(tag("nondeterministic"), |_| Purity::Nondeterministic)))),
+        ws(alt((
+            map(alt((tag("deterministic"), tag("det"))), |_| Purity::Deterministic),
+            map(alt((tag("nondeterministic"), tag("nondet"))), |_| Purity::Nondeterministic)
+        ))),
         ws(tag("fn")), ws(identifier), ws(char('(')),
         separated_list0(ws(char(',')), map(tuple((ws(identifier), ws(char(':')), parse_type)), |(n, _, t)| Param { name: n, param_type: t })),
         ws(char(')')), 

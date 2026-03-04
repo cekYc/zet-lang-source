@@ -21,7 +21,7 @@ Zet Lang'e hoş geldiniz. Bu dökümantasyon, dilin sözdizimini (syntax), temel
 Zet, diğer yüksek seviyeli dillerden farklı bir zihniyete sahiptir. Yazdığınız kodu derlemeden önce şu kuralları işletir:
 
 - **Sıfır Güven (Zero Trust):** Dış dünyadan alınan (Ağ, Dosya, Terminal) hiçbir veri doğrudan işlenemez. `validate` bloğu olmadan kullanmaya çalışmak **derleme hatası** verir.
-- **Belirleyicilik (Determinism):** Ağ veya I/O işlemi yapan fonksiyonlar ile sadece CPU kullanan fonksiyonlar dil seviyesinde birbirinden ayrılır. `deterministic` fonksiyon içinde I/O çağrısı **derleme hatası** verir.
+- **Belirleyicilik (Determinism):** Ağ veya asenkron I/O işlemi yapan fonksiyonlar ile sadece CPU kullanan fonksiyonlar dil seviyesinde birbirinden ayrılır. `det` fonksiyon içinde asenkron I/O çağrısı **derleme hatası** verir. (`print`/`println` senkron olduğu için her yerde kullanılabilir.)
 - **Yapısal Eşzamanlılık:** `spawn` edilen her arka plan görevi bir `scope` bloğu içinde yaşamak zorundadır. Scope dışında `spawn` kullanmak **derleme hatası** verir.
 
 ---
@@ -68,9 +68,9 @@ let ilk_eleman = sayilar[0]
 
 ```zet
 if yas > 18 {
-    spawn DB.log("Giris izni verildi.")
+    println("Giris izni verildi.")
 } else {
-    spawn DB.log("Giris reddedildi.")
+    println("Giris reddedildi.")
 }
 ```
 
@@ -81,7 +81,7 @@ Zet, aralık (range) tabanlı `for` döngülerini ve koşullu `while` döngüler
 ```zet
 // 0'dan 4'e kadar (4 dahil değil) döner
 for i in 0..4 {
-    spawn DB.log("Sayac: " + i)
+    println("Sayac: " + i)
 }
 
 let x = 0
@@ -98,23 +98,28 @@ Zet'te fonksiyonlar, I/O (Girdi/Çıktı) yapıp yapmadıklarına göre ikiye ay
 
 ### Deterministic (Saf) Fonksiyonlar
 
-Sadece RAM ve CPU kullanır. Asenkron bir işlem içermez. "Native C/Rust" hızında, hiçbir VM engeline takılmadan çalışır. **I/O çağrısı içerirse derleme hatası verir.**
+Sadece RAM ve CPU kullanır. Asenkron bir işlem içermez. "Native C/Rust" hızında, hiçbir VM engeline takılmadan çalışır. **Asenkron I/O çağrısı içerirse derleme hatası verir.** `print`/`println` senkron olduğu için saf fonksiyonlarda da kullanılabilir.
 
 ```zet
-deterministic fn topla(a: i64, b: i64) -> i64 {
+det fn topla(a: i64, b: i64) -> i64 {
+    println("Toplaniyor...")
     return a + b
 }
 ```
+
+> `det` yerine `deterministic` yazabilirsiniz — ikisi de geçerlidir.
 
 ### Nondeterministic (Kirli/I-O) Fonksiyonlar
 
 İçerisinde Ağ isteği, konsol girdisi veya bekleme süresi barındıran fonksiyonlardır. Arka planda otomatik olarak Asenkron (Async/Await) hale getirilirler.
 
 ```zet
-nondeterministic fn veri_cek() -> Void {
+nondet fn veri_cek() -> Void {
     // I/O işlemleri burada yapılır
 }
 ```
+
+> `nondet` yerine `nondeterministic` yazabilirsiniz — ikisi de geçerlidir.
 
 ### `call` Anahtar Kelimesi
 
@@ -124,7 +129,16 @@ Bir I/O (Nondeterministic) işleminin sonucunu beklemek istiyorsanız `call` kel
 let zaman = call Util.now()
 let web_verisi = call HTTP.get("https://api.ornek.com")
 ```
+### `print` ve `println`
 
+Ekrana çıktı basmak için `print` (satır sonu yok) veya `println` (satır sonu var) kullanılır. Bu fonksiyonlar senkron olduğu için hem `det` hem `nondet` fonksiyonlarda kullanılabilir.
+
+```zet
+det fn hesapla(n: i64) -> i64 {
+    println("Hesaplaniyor: " + n)
+    return n * 2
+}
+```
 ---
 
 ## 5. Güvenlik Mimarisi (Validation)
@@ -140,9 +154,7 @@ let kullanici_girdisi = call Console.read("Adiniz: ")
 validate kullanici_girdisi {
     success: {
         // kullanici_girdisi burada "String" (Trusted) tipine donusur
-        scope Loglama {
-            spawn DB.log("Giris yapan: " + kullanici_girdisi)
-        }
+        println("Giris yapan: " + kullanici_girdisi)
     }
 }
 ```
@@ -160,7 +172,7 @@ Bir fonksiyonu veya işlemi ana akışı durdurmadan arka planda başlatır. **`
 ```zet
 scope Islemler {
     spawn ag_istegi_gonder()
-    spawn DB.log("Bu yazi aninda ekrana basilir.")
+    spawn println("Bu yazi aninda ekrana basilir.")
 }
 ```
 
@@ -183,13 +195,14 @@ scope VeriIslemleri {
 
 Zet v0.2 ile birlikte gelen yerleşik modüller:
 
+### Ekrana Çıktı (print / println)
+
+- `print(mesaj)` — Ekrana yazar (satır sonu yok). Senkron - her yerde kullanılabilir.
+- `println(mesaj)` — Ekrana yazar (satır sonu var). Senkron - her yerde kullanılabilir.
+
 ### Konsol (Console)
 
 - `call Console.read(mesaj: String) -> Untrusted` — Kullanıcıdan terminal üzerinden veri okur.
-
-### Veritabanı / Loglama (DB)
-
-- `spawn DB.log(mesaj: String) -> Void` — Ekrana formatlanmış sistem logu basar. *(Gelecekte doğrudan DB bağlantısı sağlayacaktır.)*
 
 ### İnternet (HTTP)
 

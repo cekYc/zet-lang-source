@@ -28,7 +28,9 @@ Zet, bellek yönetimini bir "otomatik pilot" edasıyla halleder.
 Zet, yazdığınız fonksiyonun "ne tür bir iş yaptığını" bilir.
 * **Deterministic (Saf) Fonksiyonlar:** Sadece CPU ve RAM kullanan (örneğin karmaşık matematik hesaplamaları) fonksiyonlardır. Derleyici bunları araya hiçbir asenkron yük bindirmeden, en saf ve optimize makine koduna çevirir.
 * **Nondeterministic (Kirli) Fonksiyonlar:** I/O (Ağ, Disk, Bekleme) yapan fonksiyonlardır. Derleyici bunları otomatik olarak "Green Thread" mimarisine (Async/Await) sarar.
-Geliştirici arka planda dönen bu karmaşayı görmez, sadece `call` ve `spawn` kelimeleriyle orkestrayı yönetir.
+Geliştirici arka planda dönen bu karmaşayı görmez, sadece `call` ve `spawn` kelimeleriyle orkestrayı yönetir. `print`/`println` ise senkron çıktı fonksiyonlarıdır ve tüm fonksiyon tiplerinde kullanılabilir.
+
+> Kısayollar: `det` = `deterministic`, `nondet` = `nondeterministic`
 
 ## 4. Yapısal Eşzamanlılık (Structured Concurrency)
 

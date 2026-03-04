@@ -53,11 +53,6 @@ impl Untrusted {
     }
 }
 
-struct DB;
-impl DB {
-    async fn log<T: std::fmt::Display>(msg: T) { println!("  {}[DB] Log: {}{}", CYAN, msg, RESET); }
-}
-
 struct Console;
 impl Console {
     async fn read(prompt: String) -> Untrusted {
@@ -311,6 +306,19 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
                 }
             },
             Expr::Call(n, a, _awaited) => {
+                // print/println — built-in makrolar
+                if n == "println" {
+                    if a.is_empty() {
+                        return "println!()".to_string();
+                    }
+                    return format!("println!(\"{{}}\", {})", a.iter().map(|x| self.generate_expr(x)).collect::<Vec<_>>().join(", "));
+                }
+                if n == "print" {
+                    if a.is_empty() {
+                        return "print!()".to_string();
+                    }
+                    return format!("print!(\"{{}}\", {})", a.iter().map(|x| self.generate_expr(x)).collect::<Vec<_>>().join(", "));
+                }
                 let await_suffix = if self.pure_functions.contains(n) { "" } else { ".await" };
                 format!("{}({}){}", n.replace(".", "::"), a.iter().map(|x| self.generate_expr(x)).collect::<Vec<_>>().join(", "), await_suffix)
             },

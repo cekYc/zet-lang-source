@@ -29,11 +29,6 @@ impl Untrusted {
     }
 }
 
-struct DB;
-impl DB {
-    async fn log<T: std::fmt::Display>(msg: T) { println!("  {}[DB] Log: {}{}", CYAN, msg, RESET); }
-}
-
 struct Console;
 impl Console {
     async fn read(prompt: String) -> Untrusted {
@@ -80,35 +75,16 @@ trait ZetMul<Rhs> { type Output; fn z_mul(self, rhs: Rhs) -> Self::Output; }
 impl ZetMul<i64> for i64 { type Output = i64; #[inline(always)] fn z_mul(self, rhs: i64) -> i64 { self * rhs } }
 impl ZetMul<i64> for String { type Output = String; fn z_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
 impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64) -> String { self.repeat(rhs as usize) } }
-fn fib(n: i64) -> i64 {
-    if (n <= 1) {
-        return n;
-    }
-    let mut a = fib((n - 1));
-    let mut b = fib((n - 2));
+fn add(a: i64, b: i64) -> i64 {
+    println!("{}", "det function can print!".to_string());
     return (a + b);
 }
 
-async fn user_main(girdi: Untrusted) -> () {
-    match girdi.validate() {
-        Ok(girdi) => {
-            // Scope: Benchmark
-            {
-                let mut _zet_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-                let mut n = 40;
-                _zet_handles.push(tokio::spawn(async move { DB::log("Zet: fib(".to_string().z_add(n).z_add(") hesaplaniyor...".to_string())).await }));
-                let mut start = Util::now().await;
-                let mut sonuc = fib(n);
-                let mut end = Util::now().await;
-                _zet_handles.push(tokio::spawn(async move { DB::log("Sonuc: ".to_string().z_add(sonuc)).await }));
-                _zet_handles.push(tokio::spawn(async move { DB::log("Gecen Sure: ".to_string().z_add((end - start)).z_add(" ms".to_string())).await }));
-                for _h in _zet_handles { _h.await.ok(); }
-            }
-        }
-        Err(_zet_err) => {
-            eprintln!("  {}[VALIDATE FAIL] {}{}", RED, _zet_err, RESET);
-        }
-    }
+async fn user_main(input: Untrusted) -> () {
+    let mut result = add(3, 7);
+    println!("{}", "Result: ".to_string().z_add(result));
+    print!("{}", "This has no newline".to_string());
+    println!("{}", " but this does".to_string());
 }
 
 #[tokio::main] async fn main() {
