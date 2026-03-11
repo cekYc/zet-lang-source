@@ -19,5 +19,9 @@ Thumbs.db
 *.test
 *.out
 
+# Distribution / Web (ayrı repoda)
+/ZetSetup/
+/zetWeb/
+
 # Misc
 node_modules/

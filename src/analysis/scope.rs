@@ -17,6 +17,8 @@ pub struct ScopeAnalyzer {
     in_scope: bool,
     /// İç içe scope derinliği
     scope_depth: usize,
+    /// Döngü içinde miyiz? (break/continue kontrolü)
+    in_loop: bool,
 }
 
 impl ScopeAnalyzer {
@@ -25,6 +27,7 @@ impl ScopeAnalyzer {
             defined_vars: HashSet::new(),
             in_scope: false,
             scope_depth: 0,
+            in_loop: false,
         }
     }
 
@@ -32,6 +35,7 @@ impl ScopeAnalyzer {
         self.defined_vars.clear();
         self.in_scope = false;
         self.scope_depth = 0;
+        self.in_loop = false;
         for param in &func.params {
             self.defined_vars.insert(param.name.clone());
         }
@@ -64,16 +68,36 @@ impl ScopeAnalyzer {
                 self.visit_block(then_block)?;
                 if let Some(else_b) = else_block { self.visit_block(else_b)?; }
             }
+            Statement::Const { name, value } => {
+                self.visit_expr(value)?;
+                self.defined_vars.insert(name.clone());
+            }
+            Statement::Break => {
+                if !self.in_loop {
+                    return Err("`break` yalnızca bir döngü (while/for) içinde kullanılabilir!".to_string());
+                }
+            }
+            Statement::Continue => {
+                if !self.in_loop {
+                    return Err("`continue` yalnızca bir döngü (while/for) içinde kullanılabilir!".to_string());
+                }
+            }
             Statement::While { condition, body } => {
                 self.visit_expr(condition)?;
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
                 self.visit_block(body)?;
+                self.in_loop = was_in_loop;
             }
             Statement::For { var, start, end, step, body } => {
                 self.visit_expr(start)?;
                 self.visit_expr(end)?;
                 if let Some(s) = step { self.visit_expr(s)?; }
                 self.defined_vars.insert(var.clone());
+                let was_in_loop = self.in_loop;
+                self.in_loop = true;
                 self.visit_block(body)?;
+                self.in_loop = was_in_loop;
             }
             Statement::ScopeBlock { body, .. } => {
                 // Scope'a giriyoruz — spawn artık izinli
@@ -106,6 +130,16 @@ impl ScopeAnalyzer {
                 }
             }
             Expr::Binary(l, _, r) => { self.visit_expr(l)?; self.visit_expr(r)?; }
+            Expr::Unary(_, inner) => { self.visit_expr(inner)?; }
+            Expr::Interpolation(parts) => {
+                for p in parts {
+                    if let InterpolPart::Expr(e) = p { self.visit_expr(e)?; }
+                }
+            }
+            Expr::TupleLiteral(elems) => {
+                for e in elems { self.visit_expr(e)?; }
+            }
+            Expr::TupleIndex(expr, _) => { self.visit_expr(expr)?; }
             Expr::Call(_, args, _) => {
                 for arg in args { self.visit_expr(arg)?; }
             }

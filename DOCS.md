@@ -1,4 +1,4 @@
-# 📘 Zet Lang Resmi Dökümantasyonu (v0.2)
+# 📘 Zet Lang Resmi Dökümantasyonu (v0.3)
 
 Zet Lang'e hoş geldiniz. Bu dökümantasyon, dilin sözdizimini (syntax), temel konseptlerini, güvenlik modelini ve standart kütüphanesini içerir.
 
@@ -13,6 +13,7 @@ Zet Lang'e hoş geldiniz. Bu dökümantasyon, dilin sözdizimini (syntax), temel
 5. [Güvenlik Mimarisi (Validation)](#5-güvenlik-mimarisi-validation)
 6. [Eşzamanlılık (Concurrency & Scope)](#6-eşzamanlılık-concurrency--scope)
 7. [Standart Kütüphane (Stdlib)](#7-standart-kütüphane-stdlib)
+8. [v0.3 Yeni Özellikler](#8-v03-yeni-özellikler)
 
 ---
 
@@ -46,7 +47,12 @@ let isim = "Zet"
 | Tip | Açıklama |
 | --- | --- |
 | `i64` | 64-bit Tamsayılar |
+| `f64` | 64-bit Ondalıklı sayılar (v0.3) |
+| `bool` | Mantıksal değer: `true` veya `false` (v0.3) |
+| `char` | Tek karakter: `'A'`, `'z'`, `'\n'` (v0.3) |
+| `u8` | 8-bit işaretsiz tamsayı (v0.3) |
 | `String` | Metin dizileri |
+| `(T1, T2, ...)` | Tuple (demet) — farklı tiplerin birleşimi (v0.3) |
 | `Array<T>` | Aynı tipteki verilerin listesi |
 | `Untrusted` | Dışarıdan gelen, henüz doğrulanmamış kirli veri |
 | `Void` | Değer döndürmeyen fonksiyonların tipi |
@@ -84,6 +90,12 @@ for i in 0..4 {
     println("Sayac: " + i)
 }
 
+// Adım (step) belirterek — 'by' anahtar kelimesi
+for i in 0..10 by 2 {
+    println("Cift: " + i)
+}
+
+// While döngüsü
 let x = 0
 while x < 5 {
     x = x + 1
@@ -127,6 +139,7 @@ Bir I/O (Nondeterministic) işleminin sonucunu beklemek istiyorsanız `call` kel
 
 ```zet
 let zaman = call Util.now()
+let kullanici = call input("Adiniz: ")
 let web_verisi = call HTTP.get("https://api.ornek.com")
 ```
 ### `print` ve `println`
@@ -143,12 +156,12 @@ det fn hesapla(n: i64) -> i64 {
 
 ## 5. Güvenlik Mimarisi (Validation)
 
-Zet'in kalbi **Leke Analizi (Taint Analysis)** sistemidir. Dış dünyadan gelen veriler (`Console.read`, `HTTP.get` vb.) `Untrusted` tipindedir. Bu veriyi standart değişkenlere atayamaz veya işlemlere sokamazsınız. **Derleyici, lekeli verinin `validate` bloğu olmadan kullanılmasını engeller.**
+Zet'in kalbi **Leke Analizi (Taint Analysis)** sistemidir. Dış dünyadan gelen veriler (`input`, `inputln`, `HTTP.get` vb.) `Untrusted` tipindedir. Bu veriyi standart değişkenlere atayamaz veya işlemlere sokamazsınız. **Derleyici, lekeli verinin `validate` bloğu olmadan kullanılmasını engeller.**
 
 Bunu çözmek için `validate` bloğu kullanılmalıdır:
 
 ```zet
-let kullanici_girdisi = call Console.read("Adiniz: ")
+let kullanici_girdisi = call input("Adiniz: ")
 
 // Derleyici bu blok olmadan islem yapmaniza izin vermez!
 validate kullanici_girdisi {
@@ -200,9 +213,10 @@ Zet v0.2 ile birlikte gelen yerleşik modüller:
 - `print(mesaj)` — Ekrana yazar (satır sonu yok). Senkron - her yerde kullanılabilir.
 - `println(mesaj)` — Ekrana yazar (satır sonu var). Senkron - her yerde kullanılabilir.
 
-### Konsol (Console)
+### Kullanıcı Girdisi (input / inputln)
 
-- `call Console.read(mesaj: String) -> Untrusted` — Kullanıcıdan terminal üzerinden veri okur.
+- `call input(mesaj: String) -> Untrusted` — Mesajı ekrana yazar (satır sonu yok), kullanıcıdan terminal üzerinden veri okur. Sonuç `Untrusted` tipindedir, kullanmadan önce `validate` gerekir.
+- `call inputln(mesaj: String) -> Untrusted` — Mesajı ekrana yazar (satır sonu var), kullanıcıdan terminal üzerinden veri okur. Sonuç `Untrusted` tipindedir, kullanmadan önce `validate` gerekir.
 
 ### İnternet (HTTP)
 
@@ -216,3 +230,187 @@ Zet v0.2 ile birlikte gelen yerleşik modüller:
 ### JSON İşlemleri
 
 - `json(veri: String, anahtar: String) -> String` — Verilen JSON metninin içinden, belirtilen anahtara (key) ait değeri çıkarır.
+
+---
+
+## 8. v0.3 Yeni Özellikler
+
+### 8.1 Yeni Primitif Tipler
+
+#### `f64` — Ondalıklı Sayılar
+
+```zet
+let pi = 3.14159
+let alan = pi * r * r
+```
+
+f64 tüm aritmetik operatörleri destekler: `+`, `-`, `*`, `/`, `%`.
+
+#### `bool` — Mantıksal Değerler
+
+```zet
+let aktif = true
+let pasif = false
+if aktif && !pasif {
+    println("Sistem aktif")
+}
+```
+
+#### `char` — Tek Karakter
+
+```zet
+let harf = 'A'
+let satir_sonu = '\n'
+let mesaj = "Karakter: " + harf
+```
+
+Desteklenen kaçış dizileri: `'\n'`, `'\t'`, `'\\'`, `'\''`, `'\0'`.
+
+#### `u8` — 8-bit İşaretsiz Tamsayı
+
+```zet
+det fn byte_islem(b: u8) -> u8 {
+    return b
+}
+```
+
+### 8.2 Yeni Operatörler
+
+#### Modulo `%`
+
+```zet
+let kalan = 17 % 5    // 2
+let cift_mi = n % 2 == 0
+```
+
+#### Mantıksal Operatörler `&&`, `||`, `!`
+
+```zet
+if yas >= 18 && vatandas {
+    println("Oy kullanabilir")
+}
+
+if !aktif || askida {
+    println("Hesap erisim disi")
+}
+```
+
+Operatör önceliği (düşükten yükseğe): `||` → `&&` → karşılaştırma → aritmetik → `!`
+
+#### Bitwise Operatörler `&`, `|`, `^`, `<<`, `>>`
+
+```zet
+let mask = 0xFF & deger
+let bayraklar = a | b
+let xor = a ^ b
+let sola = 1 << 4        // 16
+let saga = 256 >> 3      // 32
+```
+
+Operatör önceliği (düşükten yükseğe): `|` → `^` → `&` → `<<`/`>>`
+
+### 8.3 Kontrol Akışı: `break` ve `continue`
+
+`break` ve `continue` yalnızca döngü (`while`/`for`) içinde kullanılabilir. Döngü dışında kullanılırsa **derleme hatası** verir.
+
+```zet
+// İlk 5 asal sayıyı bul
+let bulundu = 0
+let n = 2
+while bulundu < 5 {
+    if asal_mi(n) {
+        println(n)
+        bulundu = bulundu + 1
+    }
+    n = n + 1
+}
+
+// Tek sayıları atla
+for i in 0..20 {
+    if i % 2 != 0 {
+        continue
+    }
+    println("Cift: " + i)
+}
+
+// Koşulda çık
+for i in 0..1000 {
+    if i > 50 {
+        break
+    }
+}
+```
+
+### 8.4 `const` Tanımlamaları
+
+Sabit değerler `const` ile tanımlanır. Sonradan değiştirilemezler.
+
+```zet
+const MAX_DENEME = 3
+const BASLIK = "Zet Lang"
+const PI = 3
+```
+
+### 8.5 String Interpolation (Metin İçi İfade)
+
+`${}` sözdizimi ile string içinde doğrudan değişken ve ifade kullanabilirsiniz. JavaScript'teki template literal'lara benzer.
+
+```zet
+let isim = "Dunya"
+let yas = 42
+println("Merhaba ${isim}, yasiniz ${yas}!")
+println("${a} + ${b} = ${a + b}")
+```
+
+Interpolation, arka planda Rust'ın `format!()` makrosuna derlenir.
+
+### 8.6 Tuple (Demet)
+
+Farklı tiplerdeki değerleri tek bir yapıda gruplayabilirsiniz. Elemanlara `.0`, `.1`, `.2` şeklinde indeksle erişilir.
+
+```zet
+let nokta = (10, 20)
+println(nokta.0)  // 10
+println(nokta.1)  // 20
+
+det fn swap(t: (i64, i64)) -> (i64, i64) {
+    return (t.1, t.0)
+}
+```
+
+Tuple tip sözdizimi: `(i64, String)`, `(bool, i64, f64)`.
+
+### 8.7 Unary Operatörler
+
+Tekil operatörler: `-` (negatif) ve `!` (mantıksal değil).
+
+```zet
+let x = -42
+let y = -(a + b)
+let z = !aktif
+```
+
+### 8.8 Çok Boyutlu Diziler
+
+Dizilerin içine dizi koyarak matris benzeri yapılar oluşturabilirsiniz.
+
+```zet
+let matris = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+let ortadaki = matris[1][1]   // 5
+```
+
+### 8.9 Operatör Öncelik Tablosu (Düşükten Yükseğe)
+
+| Öncelik | Operatör | Açıklama |
+| --- | --- | --- |
+| 1 | `\|\|` | Mantıksal VEYA |
+| 2 | `&&` | Mantıksal VE |
+| 3 | `==` `!=` `>` `<` `>=` `<=` | Karşılaştırma |
+| 4 | `\|` | Bitwise VEYA |
+| 5 | `^` | Bitwise XOR |
+| 6 | `&` | Bitwise VE |
+| 7 | `<<` `>>` | Bit kaydırma |
+| 8 | `+` `-` | Toplama, Çıkarma |
+| 9 | `*` `/` `%` | Çarpma, Bölme, Modulo |
+| 10 | `!` `-` (unary) | Tekil operatörler |
+| 11 | `()` `[]` `.N` | Gruplama, İndeks, Tuple erişimi |

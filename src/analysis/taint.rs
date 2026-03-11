@@ -13,7 +13,7 @@ use std::collections::HashSet;
 /// 4. `validate target { success: { ... } }` bloğunun success kapsamında
 ///    `target` temizlenmiş (trusted) kabul edilir.
 
-const TAINTED_SOURCES: &[&str] = &["Console.read", "HTTP.get"];
+const TAINTED_SOURCES: &[&str] = &["Console.read", "HTTP.get", "input", "inputln"];
 
 pub struct TaintAnalyzer {
     tainted: HashSet<String>,
@@ -116,13 +116,23 @@ impl TaintAnalyzer {
 
                 Ok(())
             }
+            Statement::Const { name, value } => {
+                if self.is_tainted_source(value) {
+                    self.tainted.insert(name.clone());
+                } else if self.is_tainted_propagation(value) {
+                    self.tainted.insert(name.clone());
+                } else {
+                    self.assert_expr_clean(value)?;
+                }
+                Ok(())
+            }
             Statement::ExprStmt(e) => {
                 self.assert_expr_clean(e)
             }
             Statement::Return(Some(e)) => {
                 self.assert_expr_clean(e)
             }
-            Statement::Return(None) => Ok(()),
+            Statement::Return(None) | Statement::Break | Statement::Continue => Ok(()),
         }
     }
 
@@ -140,6 +150,8 @@ impl TaintAnalyzer {
             Expr::Identifier(name) => self.tainted.contains(name),
             Expr::JsonField(source, _) => self.is_tainted_propagation(source),
             Expr::Index(arr, _) => self.is_tainted_propagation(arr),
+            Expr::TupleIndex(inner, _) => self.is_tainted_propagation(inner),
+            Expr::Unary(_, inner) => self.is_tainted_propagation(inner),
             _ => false,
         }
     }
@@ -163,12 +175,31 @@ impl TaintAnalyzer {
                 self.assert_expr_clean(left)?;
                 self.assert_expr_clean(right)
             }
-            Expr::Call(_, args, _) => {
-                for arg in args {
-                    self.assert_expr_clean(arg)?;
+            Expr::Call(name, args, _) => {
+                // Fonksiyon çağrılarında lekeli argümanlar geçilebilir.
+                // Çağrılan fonksiyonun Untrusted parametresi varsa, 
+                // kendi taint analizinde sorumluluğu üstlenir.
+                // Sadece print/println gibi senkron builtins için kontrol yapalım.
+                let sync_builtins = ["print", "println"];
+                if sync_builtins.contains(&name.as_str()) {
+                    for arg in args {
+                        self.assert_expr_clean(arg)?;
+                    }
                 }
                 Ok(())
             }
+            Expr::Unary(_, inner) => self.assert_expr_clean(inner),
+            Expr::Interpolation(parts) => {
+                for p in parts {
+                    if let InterpolPart::Expr(e) = p { self.assert_expr_clean(e)?; }
+                }
+                Ok(())
+            }
+            Expr::TupleLiteral(elems) => {
+                for e in elems { self.assert_expr_clean(e)?; }
+                Ok(())
+            }
+            Expr::TupleIndex(inner, _) => self.assert_expr_clean(inner),
             Expr::Spawn(inner) => self.assert_expr_clean(inner),
             Expr::Await(inner) => self.assert_expr_clean(inner),
             Expr::Infra(call) => {

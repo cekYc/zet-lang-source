@@ -29,6 +29,9 @@ fn main() {
         }
     };
 
+    // UTF-8 BOM karakterini temizle
+    let content = content.trim_start_matches('\u{feff}');
+
     // 1. PARSER (ARTIK parse_program ÇAĞIRIYORUZ)
     let (_, functions) = match parser::parse_program(&content) {
         Ok(res) => res,
@@ -64,7 +67,7 @@ fn main() {
          return;
     }
 
-    println!("[Zet v0.2] Derleniyor ve Çalıştırılıyor...");
+    println!("[Zet v0.3] Derleniyor ve Çalıştırılıyor...");
     
     // Kullanıcının ek argümanlarını derlenen programa ilet
     // Kullanım: zet dosya.zt arg1 arg2 ...

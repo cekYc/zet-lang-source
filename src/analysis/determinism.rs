@@ -18,7 +18,7 @@ pub struct SymbolTable { pub functions: HashMap<String, FunctionDef> }
 /// 5. `print`/`println` senkron I/O'dur ve tüm fonksiyon tiplerinde kullanılabilir.
 
 const NONDETERMINISTIC_STDLIB: &[&str] = &[
-    "Console.read", "HTTP.get", "Util.now", "Util.to_int"
+    "Console.read", "HTTP.get", "Util.now", "Util.to_int", "input", "inputln"
 ];
 
 /// print/println senkron çıktı fonksiyonlarıdır. Deterministic fonksiyonlarda da kullanılabilir.
@@ -50,6 +50,7 @@ impl DeterminismAnalyzer {
     fn is_stmt_pure(stmt: &Statement, symbols: &SymbolTable) -> bool {
         match stmt {
             Statement::Let(l) => Self::is_expr_pure(&l.value, symbols),
+            Statement::Const { value, .. } => Self::is_expr_pure(value, symbols),
             Statement::Assign { value, .. } => Self::is_expr_pure(value, symbols),
             Statement::If { condition, then_block, else_block } => {
                 Self::is_expr_pure(condition, symbols) 
@@ -65,12 +66,12 @@ impl DeterminismAnalyzer {
                 && step.as_ref().map(|s| Self::is_expr_pure(s, symbols)).unwrap_or(true) 
                 && Self::is_block_pure(body, symbols)
             }
-            Statement::ScopeBlock { .. } => false, // scope blokları saf olamaz
+            Statement::ScopeBlock { .. } => false,
             Statement::ValidateBlock { success_scope, on_fail, .. } => {
                 Self::is_block_pure(success_scope, symbols) && Self::is_block_pure(on_fail, symbols)
             }
             Statement::ExprStmt(expr) | Statement::Return(Some(expr)) => Self::is_expr_pure(expr, symbols),
-            Statement::Return(None) => true,
+            Statement::Return(None) | Statement::Break | Statement::Continue => true,
         }
     }
 
@@ -78,28 +79,30 @@ impl DeterminismAnalyzer {
         match expr {
             Expr::Literal(_) | Expr::Identifier(_) => true,
             Expr::Binary(l, _, r) => Self::is_expr_pure(l, symbols) && Self::is_expr_pure(r, symbols),
+            Expr::Unary(_, inner) => Self::is_expr_pure(inner, symbols),
+            Expr::Interpolation(parts) => parts.iter().all(|p| match p {
+                InterpolPart::Lit(_) => true,
+                InterpolPart::Expr(e) => Self::is_expr_pure(e, symbols),
+            }),
+            Expr::TupleLiteral(elems) => elems.iter().all(|e| Self::is_expr_pure(e, symbols)),
+            Expr::TupleIndex(expr, _) => Self::is_expr_pure(expr, symbols),
             Expr::Call(name, args, _) => {
-                // Sync builtins (print/println) are allowed in pure functions
                 if SYNC_BUILTINS.contains(&name.as_str()) {
                     return args.iter().all(|a| Self::is_expr_pure(a, symbols));
                 }
-                // Kural 3: Stdlib I/O fonksiyonları saf değildir
                 if NONDETERMINISTIC_STDLIB.contains(&name.as_str()) {
                     return false;
                 }
-                // Kural 2: Kullanıcı tanımlı nondeterministic fonksiyon çağrısı
                 if let Some(target_func) = symbols.functions.get(name) {
                     if let Purity::Nondeterministic = target_func.purity {
                         return false;
                     }
                 }
-                // Argümanlar da saf olmalı
                 args.iter().all(|a| Self::is_expr_pure(a, symbols))
             }
             Expr::JsonField(source, _) => Self::is_expr_pure(source, symbols),
             Expr::ArrayLiteral(elems) => elems.iter().all(|e| Self::is_expr_pure(e, symbols)),
             Expr::Index(arr, idx) => Self::is_expr_pure(arr, symbols) && Self::is_expr_pure(idx, symbols),
-            // spawn, await, infra → kesinlikle saf değil
             Expr::Spawn(_) | Expr::Await(_) | Expr::Infra(_) => false,
         }
     }
@@ -116,6 +119,7 @@ impl DeterminismAnalyzer {
     fn check_call_in_stmt(stmt: &Statement, symbols: &SymbolTable) -> Result<(), String> {
         match stmt {
             Statement::Let(l) => Self::check_call_in_expr(&l.value, symbols),
+            Statement::Const { value, .. } => Self::check_call_in_expr(value, symbols),
             Statement::Assign { value, .. } => Self::check_call_in_expr(value, symbols),
             Statement::If { condition, then_block, else_block } => {
                 Self::check_call_in_expr(condition, symbols)?;
@@ -139,14 +143,13 @@ impl DeterminismAnalyzer {
                 Self::check_call_keyword(on_fail, symbols)
             }
             Statement::ExprStmt(e) | Statement::Return(Some(e)) => Self::check_call_in_expr(e, symbols),
-            Statement::Return(None) => Ok(()),
+            Statement::Return(None) | Statement::Break | Statement::Continue => Ok(()),
         }
     }
 
     fn check_call_in_expr(expr: &Expr, symbols: &SymbolTable) -> Result<(), String> {
         match expr {
             Expr::Call(name, args, awaited) => {
-                // Sync builtins don't need call keyword
                 if SYNC_BUILTINS.contains(&name.as_str()) {
                     for arg in args { Self::check_call_in_expr(arg, symbols)?; }
                     return Ok(());
@@ -161,8 +164,6 @@ impl DeterminismAnalyzer {
                         name, name
                     ));
                 }
-                // Not: nondeterministic fonksiyon call olmadan da çağrılabilir (spawn içinde olabilir)
-                // Bu nedenle tersini zorlamıyoruz burada — spawn ile call birlikte kullanılmaz
 
                 for arg in args { Self::check_call_in_expr(arg, symbols)?; }
                 Ok(())
@@ -171,6 +172,18 @@ impl DeterminismAnalyzer {
                 Self::check_call_in_expr(l, symbols)?;
                 Self::check_call_in_expr(r, symbols)
             }
+            Expr::Unary(_, inner) => Self::check_call_in_expr(inner, symbols),
+            Expr::Interpolation(parts) => {
+                for p in parts {
+                    if let InterpolPart::Expr(e) = p { Self::check_call_in_expr(e, symbols)?; }
+                }
+                Ok(())
+            }
+            Expr::TupleLiteral(elems) => {
+                for e in elems { Self::check_call_in_expr(e, symbols)?; }
+                Ok(())
+            }
+            Expr::TupleIndex(expr, _) => Self::check_call_in_expr(expr, symbols),
             Expr::Spawn(inner) => Self::check_call_in_expr(inner, symbols),
             Expr::Await(inner) => Self::check_call_in_expr(inner, symbols),
             Expr::Infra(call) => {

@@ -46,3 +46,21 @@ Zet, eşzamanlılığı `scope` (kapsam) blokları içine hapseder. Bir `scope` 
 Zet Lang; **"Patron gibi kod yazıp, yarışçı gibi çalışmak"** isteyen backend ve sistem mühendisleri için tasarlanmıştır. Geliştiriciyi hamallıktan (pointer aritmetiği, bellek temizliği) kurtarır, ancak onu güvenlik konusunda zorla disipline eder. 
 
 Zet, size bir hata yapma hakkı tanımaz; çünkü **güvenmediği kodu derlemez.**
+
+---
+
+## v0.3 — Genişletilmiş Tip Sistemi ve Operatör Ailesi
+
+Zet v0.3 ile birlikte, dilin tip sistemi ve ifade gücü önemli ölçüde genişletilmiştir:
+
+### Zengin Tip Sistemi
+Artık `i64` ve `String` ile sınırlı değilsiniz. `f64` (ondalıklı sayılar), `bool` (mantıksal değerler), `char` (tek karakter) ve `u8` (byte) ile gerçek dünya problemlerini doğrudan modelleyebilirsiniz. **Tuple** desteği ile farklı tipleri tek yapıda gruplayabilir, fonksiyonlardan birden fazla değer döndürebilirsiniz.
+
+### Tam Operatör Seti
+Modulo (`%`), mantıksal operatörler (`&&`, `||`, `!`), bitwise operatörler (`&`, `|`, `^`, `<<`, `>>`) ve unary negation (`-x`) artık dilin doğal parçasıdır. 12 seviyeli operatör öncelik hiyerarşisi, C/Rust standardını takip eder.
+
+### Akış Kontrolü
+`break` ve `continue` ile döngülerden erken çıkış ve yineleme atlama mümkün hale gelmiştir. Derleyici, bu ifadelerin yalnızca döngü içinde kullanıldığını garanti eder — kapsam dışı kullanım **derleme hatası** verir.
+
+### `const` ve String Interpolation
+`const` ile değişmez değerler tanımlanabilir. `"Merhaba ${isim}"` sözdizimi ile string interpolation desteği, metin oluşturmayı çok daha doğal ve okunabilir hale getirir.
