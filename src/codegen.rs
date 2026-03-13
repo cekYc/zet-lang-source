@@ -154,6 +154,10 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
         }
         if let Some(main_fn) = functions.iter().find(|f| f.name == "main") {
              code.push_str(&self.generate_main_shim(main_fn));
+        } else {
+            eprintln!("\x1b[31m[Zet Hata]\x1b[0m 'main' fonksiyonu bulunamadi! Her Zet programinda bir 'main' fonksiyonu olmalidir.");
+            eprintln!("\x1b[33mOrnek:\x1b[0m\n  nondet fn main() -> Void {{\n      println(\"Merhaba Dunya!\")\n  }}");
+            std::process::exit(1);
         }
         code
     }
