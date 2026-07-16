@@ -56,9 +56,21 @@ let sayilar = [1, 2, 3]     // Dizi
 let ilk = sayilar[0]        // Dizi erişimi
 let cift = (10, "on")       // Tuple
 let ilk_el = cift.0         // Tuple erişimi (index ile)
+
+// Hızlı Atamalar (v0.4)
+let mut sayi = 10
+sayi += 5                    // +=, -=, *=, /=
 ```
 
-### 2. Operatörler
+### 2. Dizi (Array) İşlemleri
+
+```
+let mut dizi = [10, 20, 30]
+let ilk = dizi[0]            // 10
+dizi[1] = 99                 // Dizi elemanı güncelleme (v0.4)
+```
+
+### 3. Operatörler
 
 ```
 // Aritmetik
@@ -252,6 +264,77 @@ let d = "Aktif: " + true               // String + bool
 let e = "Pi: " + 3.14                  // String + f64
 let f = "Harf: " + 'A'                 // String + char
 let g = "Ad: ${isim}, Yas: ${yas}"    // String interpolation
+```
+
+### 14. Struct (Veri Yapıları)
+
+```
+struct Kullanici {
+    id: i64,
+    isim: String,
+    aktif: bool
+}
+
+let k = Kullanici { id: 1, isim: "Ali", aktif: true }
+println(k.isim)
+```
+
+### 15. Pattern Matching (`match`)
+
+```
+let x = 10
+match x {
+    5 => println("Bes"),
+    10 => println("On"),
+    _ => println("Diger")
+}
+```
+
+### 16. Hata Yönetimi (`!`, `?`, `catch`)
+
+```
+// ! işareti fonksiyonun hata dönebileceğini belirtir
+nondet fn bolme(a: i64, b: i64) -> i64! {
+    if b == 0 {
+        return error("Sifira bolme!")
+    }
+    return a / b
+}
+
+nondet fn test() -> Void {
+    // catch: Hata gelirse varsayılan değer dön
+    let x = bolme(10, 0) catch 999 
+    
+    // ?: Hata gelirse direkt üst fonksiyona aktar
+    let y = bolme(10, 2)? 
+}
+```
+
+### 17. Modül Sistemi (`import`)
+
+Projelerinizi çoklu dosyalara bölebilirsiniz.
+```
+import std.http
+import myproject.utils.math
+```
+
+### 18. Backend İlk-Sınıf Yönlendirme (HTTP Router)
+
+```
+import std.http
+
+@get("/hello")
+nondet fn merhaba() -> String {
+    return "Merhaba Dünya!"
+}
+
+@post("/data")
+nondet fn data_al(payload: Untrusted) -> String {
+    validate payload {
+        success: { return "Güvenli Veri!" }
+        fail: { return "Geçersiz İstek!" }
+    }
+}
 ```
 
 ---
