@@ -1,0 +1,73 @@
+// =============================================
+//   ZET LANG v0.4 — Örnek Program
+//   Zero Trust Language
+// =============================================
+import std.http
+
+// --- 1. Struct (Yapılar) ---
+struct Kullanici {
+    id: i64,
+    ad: String,
+    aktif: bool
+}
+
+// --- 2. Hata Yönetimi (Error Handling) ---
+nondet fn yas_kontrol(yas: i64) -> i64! {
+    if yas < 18 {
+        return error("Kullanici 18 yasindan kucuk!")
+    }
+    return yas
+}
+
+// --- 3. Backend HTTP Yönlendirme ---
+@get("/ping")
+nondet fn ping() -> String {
+    return "pong"
+}
+
+@post("/kullanici")
+nondet fn kullanici_olustur(payload: Untrusted) -> String {
+    // 4. Zero Trust Validation
+    validate payload {
+        success: {
+            let ad = json(payload, "ad")
+            return "Kullanici basariyla alindi: " + ad
+        }
+        fail: {
+            return "Gecersiz Payload!"
+        }
+    }
+}
+
+// --- Ana Program ---
+nondet fn main() -> Void {
+    println("=== Zet Lang v0.4 Ornekleri ===")
+
+    // Hata Yakalama (catch)
+    let yas_sonuc = yas_kontrol(15) catch 999
+    println("Yas kontrol sonucu (hata durumunda 999 donecek): " + yas_sonuc)
+
+    // Struct ve Hizli Atamalar
+    let k1 = Kullanici { id: 1, ad: "Zet User", aktif: true }
+    println("Struct Kullanici: " + k1.ad)
+
+    let sayi = 10
+    sayi += 5
+    println("10 += 5 -> " + sayi)
+
+    // Dizi Mutasyonlari
+    let dizi = [1, 2, 3]
+    dizi[0] = 99
+    println("Dizi ilk eleman (99 olmali): " + dizi[0])
+
+    // Pattern Matching
+    match sayi {
+        10 => println("Sayi 10"),
+        15 => println("Sayi 15'tir! (Dogru)"),
+        _ => println("Bilinmeyen")
+    }
+
+    println("")
+    println("Zet Lang HTTP Sunucusu 8081 portunda baslatiliyor...")
+    std::http::serve("8081")
+}
