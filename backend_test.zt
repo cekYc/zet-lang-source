@@ -1,0 +1,16 @@
+import std.http
+
+@get("/merhaba")
+nondet fn merhaba_api() -> String {
+    return "Zet-Lang HTTP Sunucusuna Hos Geldiniz!"
+}
+
+@post("/veri")
+nondet fn veri_api() -> String {
+    return "Veri basariyla alindi."
+}
+
+nondet fn main() {
+    println("Web sunucusu baslatiliyor...")
+    std::http::serve("127.0.0.1:8080")
+}

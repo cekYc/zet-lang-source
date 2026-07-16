@@ -1,0 +1,39 @@
+import std.http
+
+nondet fn bolme(a: i64, b: i64) -> i64! {
+    if b == 0 {
+        return error("Sifira bolme hatasi!")
+    }
+    return a / b
+}
+
+@get("/islem")
+nondet fn islem_yap() -> String {
+    let sonuc1 = bolme(10, 0) catch 999
+    let sonuc2 = bolme(20, 2) catch 0
+    let total = sonuc1 + sonuc2
+    return "Basarili Islem. Total: " + total
+}
+
+@get("/hata-firlat")
+nondet fn hata_firlat() -> String! {
+    let result = bolme(10, 0)? // This will propagate the error!
+    return "Bu satir hic calismayacak: " + result
+}
+
+@get("/hata-yakala")
+nondet fn hata_yakala() -> String {
+    // catch blogunda eger block varsa geriye bir deger donmeli ya da return cagirmali
+    // Zet'te parse_expr uzerinden catch aldigimiz icin, catch sag tarafi bir expr olmali
+    // "bolme(5, 0) catch 0" yapabiliriz.
+    let sonuc = bolme(5, 0) catch 404
+    if sonuc == 404 {
+        return "Bolme isleminde hata oldu, catch calisti!"
+    }
+    return "Sonuc: " + sonuc
+}
+
+nondet fn main() -> Void {
+    println("Error handling test sunucusu baslatiliyor...")
+    std::http::serve("0.0.0.0:8081")
+}

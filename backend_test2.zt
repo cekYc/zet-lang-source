@@ -1,0 +1,52 @@
+import std.http
+import std.db
+
+struct YeniKullanici {
+    ad: String,
+    yas: i64
+}
+
+struct KullaniciDbRow {
+    ad: String,
+    yas: i64
+}
+
+@post("/kullanici/ekle")
+nondet fn kullanici_ekle(payload: Untrusted) -> String {
+    // 1. JSON payload'i Zero Trust felsefesiyle dogruluyoruz
+    validate payload {
+        success: {
+            // payload artik guvenli, JSON parsing fonksiyonuyla icinden alanlari okuyabiliriz
+            let ad = json(payload, "ad")
+            let yas = json(payload, "yas")
+            
+            // 2. DB tablosunu olustur ve veriyi ekle
+            std::db::execute("sqlite://test.db", "CREATE TABLE IF NOT EXISTS kullanicilar (ad TEXT, yas INTEGER)")
+            std::db::execute("sqlite://test.db", "INSERT INTO kullanicilar (ad, yas) VALUES ('" + ad + "', " + yas + ")")
+            
+            return "Kullanici eklendi: " + ad
+        }
+    }
+    
+    return "HATA: Gecersiz JSON Payload!"
+}
+
+@get("/kullanicilar")
+nondet fn kullanicilari_getir() -> String {
+    // 1. DB'den gelen veri Untrusted (Zero Trust)
+    let db_sonuc = std::db::query("sqlite://test.db", "SELECT * FROM kullanicilar")
+    
+    // 2. Untrusted DB verisini guvenli kullanici listesine ceviriyoruz
+    validate db_sonuc {
+        success: {
+            // Burada db_sonuc dogrulandi (su anki derleyicide success bloguna duser)
+            return "Veriler guvenle okundu!"
+        }
+    }
+    return "HATA: DB verisi bozuk!"
+}
+
+nondet fn main() {
+    println("Zet Zero Trust Web Sunucusu 8081 portunda baslatiliyor...")
+    std::http::serve("127.0.0.1:8081")
+}

@@ -1,0 +1,15 @@
+struct Nokta {
+    x: i64,
+    y: i64
+}
+
+det fn topla(a: i64, b: i64) -> i64 {
+    return a + b
+}
+
+det fn nokta_olustur(a: i64, b: i64) -> Nokta {
+    return Nokta {
+        x: a,
+        y: b
+    }
+}

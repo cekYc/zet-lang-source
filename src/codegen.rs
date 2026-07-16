@@ -5,6 +5,7 @@ pub struct Codegen {
     indent_level: usize,
     pure_functions: HashSet<String>,
     is_current_func_pure: bool,
+    is_current_func_result: bool,
     /// Scope bloğu içinde miyiz? (spawn → _zet_handles.push)
     in_scope: bool,
     /// For döngüsü içinde miyiz? (continue → break '_zet_body_N)
@@ -13,6 +14,7 @@ pub struct Codegen {
     for_label_id: usize,
     /// Current for-loop label id stack
     for_label_stack: Vec<usize>,
+    routes: Vec<(String, String, String, usize, bool)>,
 }
 
 impl Codegen {
@@ -21,10 +23,12 @@ impl Codegen {
             indent_level: 0,
             pure_functions: HashSet::new(),
             is_current_func_pure: false,
+            is_current_func_result: false,
             in_scope: false,
             in_for_loop: false,
             for_label_id: 0,
             for_label_stack: Vec::new(),
+            routes: Vec::new(),
         } 
     }
 
@@ -33,8 +37,8 @@ impl Codegen {
     fn get_runtime_preamble(&self) -> String {
         r#"
 #![allow(dead_code, unused_imports, unused_variables, unused_parens, unused_mut, non_snake_case)]
-use std::time::Duration;
-use std::io::{self, Write};
+use ::std::time::Duration;
+use ::std::io::{self, Write};
 use serde_json::Value;
 
 const RESET: &str = "\x1b[0m";
@@ -86,8 +90,8 @@ impl Util {
     async fn to_float(s: String) -> f64 { s.trim().parse::<f64>().unwrap_or(0.0) }
     #[inline(always)]
     async fn now() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        ::std::time::SystemTime::now()
+            .duration_since(::std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64
     }
@@ -140,26 +144,99 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
 "#.to_string()
     }
 
-    pub fn generate(&mut self, functions: &Vec<FunctionDef>) -> String {
-        self.pure_functions.clear();
-        for func in functions {
-            if let Purity::Deterministic = func.purity {
-                self.pure_functions.insert(func.name.clone());
+    fn collect_metadata(&mut self, items: &Vec<TopLevel>, module_path: Vec<String>) {
+        for item in items {
+            match item {
+                TopLevel::Function(func) => {
+                    let mut full_path = module_path.clone();
+                    // main function is generated as user_main in root module
+                    if func.name == "main" && module_path.is_empty() {
+                        full_path.push("user_main".to_string());
+                    } else {
+                        full_path.push(func.name.clone());
+                    }
+                    let rust_path = full_path.join("::");
+
+                    if let Purity::Deterministic = func.purity {
+                        self.pure_functions.insert(func.name.clone());
+                    }
+                    
+                    for attr in &func.attributes {
+                        let method = match attr.name.as_str() {
+                            "get" | "post" | "put" | "delete" | "patch" => attr.name.clone(),
+                            _ => continue,
+                        };
+                        if let Some(route_path) = attr.args.get(0) {
+                            // Strip quotes from route_path
+                            let clean_path = route_path.trim_matches('"').to_string();
+                            let is_res = matches!(func.return_type, TypeRef::Result(_));
+                            self.routes.push((method, clean_path, rust_path.clone(), func.params.len(), is_res));
+                        }
+                    }
+                }
+                TopLevel::Module(name, inner) => {
+                    let mut new_path = module_path.clone();
+                    new_path.push(name.clone());
+                    self.collect_metadata(inner, new_path);
+                }
+                _ => {}
             }
         }
+    }
+
+    pub fn generate(&mut self, toplevels: &Vec<TopLevel>) -> String {
+        self.pure_functions.clear();
+        self.routes.clear();
+        self.collect_metadata(toplevels, Vec::new());
 
         let mut code = self.get_runtime_preamble();
-        for func in functions {
-            code.push_str(&self.generate_function(func));
+        
+        let mut main_func = None;
+        for item in toplevels {
+            if let TopLevel::Function(f) = item {
+                if f.name == "main" { main_func = Some(f.clone()); }
+            }
+            code.push_str(&self.generate_toplevel(item));
         }
-        if let Some(main_fn) = functions.iter().find(|f| f.name == "main") {
-             code.push_str(&self.generate_main_shim(main_fn));
+
+        if let Some(main_fn) = main_func {
+             code.push_str(&self.generate_main_shim(&main_fn));
         } else {
             eprintln!("\x1b[31m[Zet Hata]\x1b[0m 'main' fonksiyonu bulunamadi! Her Zet programinda bir 'main' fonksiyonu olmalidir.");
             eprintln!("\x1b[33mOrnek:\x1b[0m\n  nondet fn main() -> Void {{\n      println(\"Merhaba Dunya!\")\n  }}");
             std::process::exit(1);
         }
+        code.push_str("\n\n");
+        code.push_str(&self.generate_router());
         code
+    }
+
+    fn generate_toplevel(&mut self, item: &TopLevel) -> String {
+        match item {
+            TopLevel::Function(func) => self.generate_function(func),
+            TopLevel::Struct(s) => {
+                let mut code = format!("#[derive(Clone, Debug)]\npub struct {} {{\n", s.name);
+                for field in &s.fields {
+                    code.push_str(&format!("    pub {}: {},\n", field.name, self.map_type(&field.param_type)));
+                }
+                code.push_str("}\n\n");
+                code
+            }
+            TopLevel::Module(name, inner) => {
+                let mut code = format!("pub mod {} {{\n", name);
+                code.push_str("    use super::*;\n");
+                for child in inner {
+                    // Indent all lines
+                    let child_code = self.generate_toplevel(child);
+                    for line in child_code.lines() {
+                        code.push_str(&format!("    {}\n", line));
+                    }
+                }
+                code.push_str("}\n\n");
+                code
+            }
+            TopLevel::Import(_) => String::new(),
+        }
     }
 
     fn generate_function(&mut self, func: &FunctionDef) -> String {
@@ -168,10 +245,11 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
         
         let is_pure = self.pure_functions.contains(&func.name);
         self.is_current_func_pure = is_pure;
+        self.is_current_func_result = matches!(func.return_type, TypeRef::Result(_));
         
         let async_keyword = if is_pure { "" } else { "async " };
 
-        let mut code = format!("{}fn {}({}) -> {} {{\n", async_keyword, real_func_name, params, self.map_type(&func.return_type));
+        let mut code = format!("pub {}fn {}({}) -> {} {{\n", async_keyword, real_func_name, params, self.map_type(&func.return_type));
         self.indent_level += 1;
         code.push_str(&self.generate_block(&func.body));
         self.indent_level -= 1;
@@ -191,10 +269,43 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
             }
         } else {
             r#"#[tokio::main] async fn main() {
-    let _zet_input = Untrusted(std::env::args().skip(1).collect::<Vec<_>>().join(" "));
+    let _zet_input = Untrusted(::std::env::args().skip(1).collect::<Vec<_>>().join(" "));
     user_main(_zet_input).await;
 }"#.to_string()
         }
+    }
+
+    fn generate_router(&self) -> String {
+        let mut code = "pub fn _zet_build_router() -> ::axum::Router {\n".to_string();
+        code.push_str("    let mut app = ::axum::Router::new();\n");
+        for (method, path, rust_func, params_len, is_res) in &self.routes {
+            let axum_method = match method.as_str() {
+                "get" => "get",
+                "post" => "post",
+                "put" => "put",
+                "delete" => "delete",
+                "patch" => "patch",
+                _ => "get",
+            };
+            if *params_len == 1 {
+                code.push_str(&format!("    app = app.route(\"{}\", ::axum::routing::{}(|body: ::axum::extract::Json<::serde_json::Value>| async move {{\n", path, axum_method));
+                // Convert body to Untrusted JSON string
+                code.push_str(&format!("        let payload = Untrusted(::serde_json::to_string(&body.0).unwrap_or_default());\n"));
+                code.push_str(&format!("        let res = {}(payload).await;\n", rust_func));
+            } else {
+                code.push_str(&format!("    app = app.route(\"{}\", ::axum::routing::{}(|req: ::axum::extract::Request| async move {{\n", path, axum_method));
+                code.push_str(&format!("        let res = {}().await;\n", rust_func));
+            }
+            if *is_res {
+                code.push_str("        let res_str = match res { Ok(v) => v.to_string(), Err(e) => format!(\"Error: {}\", e) };\n");
+                code.push_str("        ::axum::response::IntoResponse::into_response(res_str)\n");
+            } else {
+                code.push_str("        ::axum::response::IntoResponse::into_response(res.to_string())\n");
+            }
+            code.push_str("    }));\n");
+        }
+        code.push_str("    app\n}\n");
+        code
     }
 
     fn generate_block(&mut self, block: &Block) -> String {
@@ -208,7 +319,49 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
         match stmt {
             Statement::Let(s) => format!("{}let mut {} = {};\n", indent, s.name, self.generate_expr(&s.value)),
             Statement::Const { name, value } => format!("{}let {} = {};\n", indent, name, self.generate_expr(value)),
-            Statement::Assign { name, value } => format!("{}{} = {};\n", indent, name, self.generate_expr(value)),
+            Statement::Assign { name, op, value } => format!("{}{} {} {};\n", indent, name, self.map_assign_op(op), self.generate_expr(value)),
+            Statement::IndexAssign { name, index, op, value } => format!("{}{}[({} as usize)] {} {};\n", indent, name, self.generate_expr(index), self.map_assign_op(op), self.generate_expr(value)),
+            Statement::Match { expr, arms } => {
+                let has_string_pattern = arms.iter().any(|a| matches!(a.pattern, Pattern::Literal(Literal::Str(_))));
+                let expr_str = self.generate_expr(expr);
+                let match_target = if has_string_pattern { format!("{}.as_str()", expr_str) } else { expr_str };
+                
+                let mut s = format!("{}match {} {{\n", indent, match_target);
+                self.indent_level += 1;
+                for arm in arms {
+                    let pat_str = match &arm.pattern {
+                        Pattern::Wildcard => "_".to_string(),
+                        Pattern::Identifier(n) => n.clone(),
+                        Pattern::Literal(Literal::Str(st)) => {
+                            let escaped = st.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t");
+                            format!("\"{}\"", escaped)
+                        },
+                        Pattern::Literal(Literal::Int(i)) => i.to_string(),
+                        Pattern::Literal(Literal::Float(f)) => {
+                            let fs = format!("{}", f);
+                            if fs.contains('.') { format!("{}f64", fs) } else { format!("{}.0f64", fs) }
+                        },
+                        Pattern::Literal(Literal::Bool(b)) => b.to_string(),
+                        Pattern::Literal(Literal::Char(c)) => {
+                            let escaped = match c {
+                                '\n' => "\\n".to_string(), '\t' => "\\t".to_string(),
+                                '\\' => "\\\\".to_string(), '\'' => "\\'".to_string(),
+                                '\0' => "\\0".to_string(),
+                                _ => c.to_string(),
+                            };
+                            format!("'{}'", escaped)
+                        },
+                    };
+                    s.push_str(&format!("{}{} => {{\n", self.indent(), pat_str));
+                    self.indent_level += 1;
+                    s.push_str(&self.generate_block(&arm.body));
+                    self.indent_level -= 1;
+                    s.push_str(&format!("{}}},\n", self.indent()));
+                }
+                self.indent_level -= 1;
+                s.push_str(&format!("{}}}\n", indent));
+                s
+            }
             Statement::ExprStmt(e) => format!("{}{};\n", indent, self.generate_expr(e)),
             Statement::Break => {
                 if self.in_for_loop {
@@ -323,8 +476,25 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
                 s.push_str(&format!("{}}}\n", indent));
                 s
             }
-            Statement::Return(Some(e)) => format!("{}return {};\n", indent, self.generate_expr(e)),
-            Statement::Return(None) => format!("{}return;\n", indent),
+            Statement::Return(Some(e)) => {
+                if self.is_current_func_result {
+                    if let Expr::Call(name, args, _) = e {
+                        if name == "error" && !args.is_empty() {
+                            return format!("{}return Err({}.to_string());\n", indent, self.generate_expr(&args[0]));
+                        }
+                    }
+                    format!("{}return Ok({});\n", indent, self.generate_expr(e))
+                } else {
+                    format!("{}return {};\n", indent, self.generate_expr(e))
+                }
+            }
+            Statement::Return(None) => {
+                if self.is_current_func_result {
+                    format!("{}return Ok(());\n", indent)
+                } else {
+                    format!("{}return;\n", indent)
+                }
+            }
         }
     }
 
@@ -409,6 +579,17 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
             },
             Expr::Index(arr, idx) => {
                 format!("{}[({} as usize)]", self.generate_expr(arr), self.generate_expr(idx))
+            }
+            Expr::MethodCall(obj, method, args) => {
+                let args_str = args.iter().map(|a| self.generate_expr(a)).collect::<Vec<_>>().join(", ");
+                format!("{}.{}({})", self.generate_expr(obj), method, args_str)
+            },
+            Expr::StructLiteral(name, fields) => {
+                let fields_str = fields.iter().map(|(k, v)| format!("{}: {}", k, self.generate_expr(v))).collect::<Vec<_>>().join(", ");
+                format!("{} {{ {} }}", name.replace(".", "::"), fields_str)
+            },
+            Expr::FieldAccess(obj, field) => {
+                format!("{}.{}", self.generate_expr(obj), field)
             },
             Expr::TupleLiteral(elements) => {
                 let elems: Vec<String> = elements.iter().map(|e| self.generate_expr(e)).collect();
@@ -448,8 +629,20 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
                 if n == "input" || n == "inputln" {
                     return format!("{}({}){}", n, a.iter().map(|x| self.generate_expr_as_string(x)).collect::<Vec<_>>().join(", "), ".await");
                 }
-                let await_suffix = if self.pure_functions.contains(n) { "" } else { ".await" };
-                format!("{}({}){}", n.replace(".", "::"), a.iter().map(|x| self.generate_expr_owned(x)).collect::<Vec<_>>().join(", "), await_suffix)
+                if n == "__rust__" {
+                    if let Some(Expr::Literal(Literal::Str(s))) = a.get(0) {
+                        return s.clone();
+                    }
+                }
+                if n == "error" && !a.is_empty() {
+                    return format!("Err({}.to_string())", self.generate_expr(&a[0]));
+                }
+                let func_name_only = n.split("::").last().unwrap_or(n);
+                let await_suffix = if self.pure_functions.contains(func_name_only) { "" } else { ".await" };
+                format!("{}({}){}", n, a.iter().map(|x| self.generate_expr_owned(x)).collect::<Vec<_>>().join(", "), await_suffix)
+            },
+            Expr::InlineRust(code) => {
+                code.clone()
             },
             Expr::Spawn(e) => {
                 if self.in_scope {
@@ -459,6 +652,8 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
                 }
             },
             Expr::Await(e) => format!("{}.await", self.generate_expr(e)),
+            Expr::Try(e) => format!("{}?", self.generate_expr(e)),
+            Expr::Catch(expr, fallback) => format!("{}.unwrap_or_else(|_| {{ {} }})", self.generate_expr(expr), self.generate_expr(fallback)),
         }
     }
 
@@ -472,9 +667,21 @@ impl<'a> ZetMul<i64> for &'a str { type Output = String; fn z_mul(self, rhs: i64
             TypeRef::Byte => "u8".to_string(),
             TypeRef::String => "String".to_string(),
             TypeRef::Untrusted => "Untrusted".to_string(),
+            TypeRef::Result(inner) => format!("Result<{}, String>", self.map_type(inner)),
             TypeRef::Array(inner) => format!("Vec<{}>", self.map_type(inner)),
             TypeRef::Tuple(types) => format!("({})", types.iter().map(|t| self.map_type(t)).collect::<Vec<_>>().join(", ")),
-            TypeRef::Custom(_) => "String".to_string(),
+            TypeRef::Custom(name) => name.replace(".", "::"),
         } 
+    }
+
+    fn map_assign_op(&self, op: &AssignOp) -> &str {
+        match op {
+            AssignOp::Assign => "=",
+            AssignOp::AddAssign => "+=",
+            AssignOp::SubAssign => "-=",
+            AssignOp::MulAssign => "*=",
+            AssignOp::DivAssign => "/=",
+            AssignOp::ModAssign => "%=",
+        }
     }
 }

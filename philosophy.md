@@ -39,6 +39,14 @@ Zet, eşzamanlılığı `scope` (kapsam) blokları içine hapseder. Bir `scope` 
 
 > *"Karanlıkta ateş edip merminin nereye gittiğini unutmazsınız. Zet'te sıktığınız her mermi (thread), şarjöre (scope) hesap vermek zorundadır."*
 
+## 5. Backend First-Class & Güvenli Hata Yönetimi
+
+Zet sadece teorik bir akademik dil değildir. Doğrudan API ve sunucu geliştirmek üzere tasarlanmıştır.
+
+* **Dahili Ağ Yönlendirmesi (Routing):** `@get`, `@post` gibi etiketlerle (decorator) HTTP rotaları doğrudan dil seviyesinde tanımlanır. Ekstra framework kurmaya gerek kalmaz.
+* **Veritabanı Entegrasyonu:** Modüller aracılığıyla (`std.db`) Zero-Trust anlayışına sadık kalarak SQL veritabanlarına (SQLite vd.) bağlanır.
+* **Modern Hata Yönetimi (Error Handling):** `Result<T, E>` döngüleri yerine `T!` tipiyle potansiyel hatalar belirlenir, `?` operatörü ile yukarı aktarılır ve `catch` blokları ile güvenle yakalanıp varsayılan değerlere dönüştürülür. Çökme (panic) kültürü Zet'te kabul edilmez.
+
 ---
 
 ## Sonuç: Neden Zet?

@@ -15,15 +15,23 @@ use std::collections::HashSet;
 
 const TAINTED_SOURCES: &[&str] = &["Console.read", "HTTP.get", "input", "inputln"];
 
-pub struct TaintAnalyzer {
+use crate::analysis::determinism::SymbolTable;
+
+pub struct TaintAnalyzer<'a> {
     tainted: HashSet<String>,
+    symbols: &'a SymbolTable,
 }
 
-impl TaintAnalyzer {
-    pub fn check(func: &FunctionDef) -> Result<(), String> {
-        let mut analyzer = TaintAnalyzer {
+impl<'a> TaintAnalyzer<'a> {
+    pub fn new(symbols: &'a SymbolTable) -> Self {
+        TaintAnalyzer {
             tainted: HashSet::new(),
-        };
+            symbols,
+        }
+    }
+
+    pub fn check(func: &FunctionDef, symbols: &SymbolTable) -> Result<(), String> {
+        let mut analyzer = TaintAnalyzer::new(symbols);
 
         // Kural 1: Untrusted tipli parametreleri lekele
         for param in &func.params {
@@ -58,13 +66,31 @@ impl TaintAnalyzer {
                 }
                 Ok(())
             }
-            Statement::Assign { name, value } => {
+            Statement::Assign { name, op: _, value } => {
                 if self.is_tainted_source(value) {
                     self.tainted.insert(name.clone());
                 } else if self.is_tainted_propagation(value) {
                     self.tainted.insert(name.clone());
                 } else {
                     self.assert_expr_clean(value)?;
+                }
+                Ok(())
+            }
+            Statement::IndexAssign { name, index, op: _, value } => {
+                if self.is_tainted_source(value) {
+                    self.tainted.insert(name.clone());
+                } else if self.is_tainted_propagation(value) {
+                    self.tainted.insert(name.clone());
+                } else {
+                    self.assert_expr_clean(index)?;
+                    self.assert_expr_clean(value)?;
+                }
+                Ok(())
+            }
+            Statement::Match { expr, arms } => {
+                self.assert_expr_clean(expr)?;
+                for arm in arms {
+                    self.visit_block(&arm.body)?;
                 }
                 Ok(())
             }
@@ -101,6 +127,7 @@ impl TaintAnalyzer {
                 {
                     let mut fail_analyzer = TaintAnalyzer {
                         tainted: self.tainted.clone(),
+                        symbols: self.symbols,
                     };
                     fail_analyzer.visit_block(on_fail)?;
                 }
@@ -109,6 +136,7 @@ impl TaintAnalyzer {
                 {
                     let mut success_analyzer = TaintAnalyzer {
                         tainted: self.tainted.clone(),
+                        symbols: self.symbols,
                     };
                     success_analyzer.tainted.remove(target);
                     success_analyzer.visit_block(success_scope)?;
@@ -139,7 +167,15 @@ impl TaintAnalyzer {
     /// Bir ifadenin doğrudan lekeli veri kaynağı olup olmadığını kontrol eder
     fn is_tainted_source(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Call(name, _, _) => TAINTED_SOURCES.contains(&name.as_str()),
+            Expr::Call(name, _, _) => {
+                if TAINTED_SOURCES.contains(&name.as_str()) { return true; }
+                if let Some(func) = self.symbols.functions.get(name) {
+                    if let TypeRef::Untrusted = func.return_type {
+                        return true;
+                    }
+                }
+                false
+            },
             _ => false,
         }
     }
@@ -148,10 +184,14 @@ impl TaintAnalyzer {
     fn is_tainted_propagation(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Identifier(name) => self.tainted.contains(name),
+            Expr::InlineRust(_) => true, // Inline Rust returns untrusted data by default
             Expr::JsonField(source, _) => self.is_tainted_propagation(source),
             Expr::Index(arr, _) => self.is_tainted_propagation(arr),
             Expr::TupleIndex(inner, _) => self.is_tainted_propagation(inner),
             Expr::Unary(_, inner) => self.is_tainted_propagation(inner),
+            Expr::MethodCall(obj, _, _) => self.is_tainted_propagation(obj),
+            Expr::StructLiteral(_, fields) => fields.iter().any(|(_, e)| self.is_tainted_propagation(e)),
+            Expr::FieldAccess(obj, _) => self.is_tainted_propagation(obj),
             _ => false,
         }
     }
@@ -201,6 +241,7 @@ impl TaintAnalyzer {
             }
             Expr::TupleIndex(inner, _) => self.assert_expr_clean(inner),
             Expr::Spawn(inner) => self.assert_expr_clean(inner),
+            Expr::InlineRust(_) => Ok(()),
             Expr::Await(inner) => self.assert_expr_clean(inner),
             Expr::Infra(call) => {
                 for arg in &call.args {
@@ -216,6 +257,25 @@ impl TaintAnalyzer {
             Expr::Index(arr, idx) => {
                 self.assert_expr_clean(arr)?;
                 self.assert_expr_clean(idx)
+            }
+            Expr::MethodCall(obj, _, args) => {
+                self.assert_expr_clean(obj)?;
+                for a in args {
+                    self.assert_expr_clean(a)?;
+                }
+                Ok(())
+            }
+            Expr::StructLiteral(_, fields) => {
+                for (_, e) in fields {
+                    self.assert_expr_clean(e)?;
+                }
+                Ok(())
+            }
+            Expr::FieldAccess(obj, _) => self.assert_expr_clean(obj),
+            Expr::Try(e) => self.assert_expr_clean(e),
+            Expr::Catch(e, fallback) => {
+                self.assert_expr_clean(e)?;
+                self.assert_expr_clean(fallback)
             }
         }
     }

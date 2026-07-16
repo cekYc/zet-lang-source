@@ -8,6 +8,7 @@ pub enum TypeRef {
     Byte,       // u8
     String, 
     Untrusted, 
+    Result(Box<TypeRef>), // e.g., i64!
     Array(Box<TypeRef>),
     Tuple(Vec<TypeRef>),
     Custom(String),
@@ -46,6 +47,19 @@ pub enum InterpolPart {
 }
 
 #[derive(Debug, Clone)]
+pub enum Pattern {
+    Literal(Literal),
+    Identifier(String),
+    Wildcard,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone)]
 pub struct InfraConfig {
     pub timeout_ms: u64,
 }
@@ -68,6 +82,7 @@ pub enum Expr {
     Call(String, Vec<Expr>, bool),
     Spawn(Box<Expr>),
     Await(Box<Expr>),
+    InlineRust(String),
     Infra(InfraCall),
     JsonField(Box<Expr>, String),
     
@@ -78,6 +93,13 @@ pub enum Expr {
     TupleIndex(Box<Expr>, usize),
     
     Interpolation(Vec<InterpolPart>),
+    
+    MethodCall(Box<Expr>, String, Vec<Expr>),
+    StructLiteral(String, Vec<(String, Expr)>),
+    FieldAccess(Box<Expr>, String),
+    
+    Try(Box<Expr>), // expr?
+    Catch(Box<Expr>, Box<Expr>), // expr catch default_expr
 }
 
 #[derive(Debug, Clone)]
@@ -86,11 +108,23 @@ pub struct LetStmt {
     pub value: Expr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignOp {
+    Assign,      // =
+    AddAssign,   // +=
+    SubAssign,   // -=
+    MulAssign,   // *=
+    DivAssign,   // /=
+    ModAssign,   // %=
+}
+
 #[derive(Debug, Clone)]
 pub enum Statement {
     Let(LetStmt),
     Const { name: String, value: Expr },
-    Assign { name: String, value: Expr },
+    Assign { name: String, op: AssignOp, value: Expr },
+    IndexAssign { name: String, index: Expr, op: AssignOp, value: Expr },
+    Match { expr: Expr, arms: Vec<MatchArm> },
     If { condition: Expr, then_block: Block, else_block: Option<Block> },
     While { condition: Expr, body: Block },
     For { var: String, start: Expr, end: Expr, step: Option<Expr>, body: Block },
@@ -113,10 +147,31 @@ pub enum Purity {
 }
 
 #[derive(Debug, Clone)]
+pub struct Attribute {
+    pub name: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionDef {
+    pub attributes: Vec<Attribute>,
     pub name: String,
     pub purity: Purity,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub body: Block,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<Param>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TopLevel {
+    Function(FunctionDef),
+    Struct(StructDef),
+    Import(Vec<String>),
+    Module(String, Vec<TopLevel>),
 }

@@ -1,0 +1,20 @@
+det fn main() -> Void {
+    let deger = 42
+    match deger {
+        10 => { println("On") }
+        42 => { println("Kirk Iki!") }
+        _ => { println("Bilinmiyor") }
+    }
+    
+    let yazi = "deneme"
+    match yazi {
+        "hello" => { println("Merhaba") }
+        "deneme" => { println("Test Basarili") }
+        _ => { println("Hicbiri") }
+    }
+    
+    let test_bind = 5
+    match test_bind {
+        x => { println("Baglanan deger: " + x) }
+    }
+}

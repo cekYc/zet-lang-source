@@ -57,11 +57,29 @@ impl ScopeAnalyzer {
                 self.visit_expr(&l.value)?;
                 self.defined_vars.insert(l.name.clone());
             }
-            Statement::Assign { name, value } => {
+            Statement::Assign { name, op: _, value } => {
                 if !self.defined_vars.contains(name) {
                     return Err(format!("Tanımsız değişken: '{}'", name));
                 }
                 self.visit_expr(value)?;
+            }
+            Statement::IndexAssign { name, index, op: _, value } => {
+                if !self.defined_vars.contains(name) {
+                    return Err(format!("Tanımsız değişken: '{}'", name));
+                }
+                self.visit_expr(index)?;
+                self.visit_expr(value)?;
+            }
+            Statement::Match { expr, arms } => {
+                self.visit_expr(expr)?;
+                for arm in arms {
+                    let backup = self.defined_vars.clone();
+                    if let Pattern::Identifier(ref n) = arm.pattern {
+                        self.defined_vars.insert(n.clone());
+                    }
+                    self.visit_block(&arm.body)?;
+                    self.defined_vars = backup;
+                }
             }
             Statement::If { condition, then_block, else_block } => {
                 self.visit_expr(condition)?;
@@ -152,6 +170,7 @@ impl ScopeAnalyzer {
                 }
                 self.visit_expr(e)?;
             }
+            Expr::InlineRust(_) => {}
             Expr::Await(e) => self.visit_expr(e)?,
             Expr::Infra(call) => {
                 for arg in &call.args { self.visit_expr(arg)?; }
@@ -164,6 +183,14 @@ impl ScopeAnalyzer {
                 self.visit_expr(arr)?;
                 self.visit_expr(idx)?;
             }
+            Expr::MethodCall(obj, _, args) => {
+                self.visit_expr(obj)?;
+                for arg in args { self.visit_expr(arg)?; }
+            }
+            Expr::StructLiteral(_, fields) => {
+                for (_, e) in fields { self.visit_expr(e)?; }
+            }
+            Expr::FieldAccess(obj, _) => self.visit_expr(obj)?,
             _ => {}
         }
         Ok(())

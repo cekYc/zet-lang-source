@@ -4,7 +4,7 @@ use nom::{
     combinator::{map, map_res, opt, recognize, value, verify},
     sequence::{delimited, pair, preceded, tuple, terminated},
     branch::alt,
-    multi::{separated_list0, many0, many1},
+    multi::{separated_list0, separated_list1, many0, many1},
     IResult,
 };
 use crate::ast::*;
@@ -40,7 +40,17 @@ fn identifier(input: &str) -> IResult<&str, String> {
 }
 
 fn dot_identifier(input: &str) -> IResult<&str, String> {
-    map(recognize(pair(identifier, pair(char('.'), identifier))), |s: &str| s.to_string())(input)
+    verify(
+        map(recognize(pair(identifier, pair(char('.'), identifier))), |s: &str| s.to_string()),
+        |s: &String| s.chars().next().unwrap_or('a').is_uppercase()
+    )(input)
+}
+
+fn path_identifier(input: &str) -> IResult<&str, String> {
+    map(
+        recognize(tuple((identifier, many1(preceded(tag("::"), identifier))))),
+        |s: &str| s.to_string()
+    )(input)
 }
 
 fn float_number(input: &str) -> IResult<&str, f64> {
@@ -178,7 +188,7 @@ fn parse_spawn(input: &str) -> IResult<&str, Expr> {
 fn parse_call_expr(input: &str) -> IResult<&str, Expr> {
     map(tuple((
         opt(ws(kw("call"))), 
-        alt((dot_identifier, identifier)), 
+        alt((path_identifier, dot_identifier, identifier)), 
         ws(char('(')), 
         separated_list0(ws(char(',')), parse_expr), 
         ws(char(')'))
@@ -231,23 +241,47 @@ fn parse_paren_or_tuple(input: &str) -> IResult<&str, Expr> {
 
 // ─── Primary Expressions ────────────────────────────────────────
 
+fn parse_struct_literal(input: &str) -> IResult<&str, Expr> {
+    map(tuple((
+        alt((path_identifier, dot_identifier, identifier)),
+        ws(char('{')),
+        separated_list0(ws(char(',')), map(tuple((
+            ws(identifier),
+            ws(char(':')),
+            parse_expr
+        )), |(k, _, v)| (k, v))),
+        ws(char('}'))
+    )), |(name, _, fields, _)| Expr::StructLiteral(name, fields))(input)
+}
+
+fn parse_inline_rust(input: &str) -> IResult<&str, Expr> {
+    map(tuple((
+        ws(tag("__rust__")),
+        ws(char('(')),
+        parse_string_literal,
+        ws(char(')'))
+    )), |(_, _, code, _)| Expr::InlineRust(code))(input)
+}
+
 fn parse_primary(input: &str) -> IResult<&str, Expr> {
     alt((
-        parse_spawn,
-        parse_infra_expr, 
-        parse_json_field,
-        parse_print,
+        parse_inline_rust,
         parse_input_expr,
         parse_call_expr,  
+        parse_struct_literal,
         parse_array_literal,
+        parse_json_field,
+        parse_infra_expr,
+        parse_spawn,
+        parse_print,
+        parse_string_expr,
         map(float_number, |f| Expr::Literal(Literal::Float(f))),
         map(number, |n| Expr::Literal(Literal::Int(n))),
+        map(ws(tag("true")), |_| Expr::Literal(Literal::Bool(true))),
+        map(ws(tag("false")), |_| Expr::Literal(Literal::Bool(false))),
         map(char_literal, |c| Expr::Literal(Literal::Char(c))),
-        parse_string_expr,
-        map(kw("true"), |_| Expr::Literal(Literal::Bool(true))),
-        map(kw("false"), |_| Expr::Literal(Literal::Bool(false))),
-        map(identifier, Expr::Identifier),
         parse_paren_or_tuple,
+        map(identifier, Expr::Identifier),
     ))(input)
 }
 
@@ -255,27 +289,59 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
 
 fn parse_atom(input: &str) -> IResult<&str, Expr> {
     let (input, mut expr) = parse_primary(input)?;
-    let (mut input, indices) = many0(delimited(ws(char('[')), parse_expr, ws(char(']'))))(input)?;
-    for idx in indices {
-        expr = Expr::Index(Box::new(expr), Box::new(idx));
-    }
-    // Tuple indeks erişimi: t.0, t.1
+    let mut rest = input;
     loop {
-        let try_input = input;
-        if let Ok((rest, _)) = char::<&str, nom::error::Error<&str>>('.')(try_input) {
-            if let Ok((rest2, idx)) = digit1::<&str, nom::error::Error<&str>>(rest) {
-                if rest2.starts_with(|c: char| c.is_alphabetic() || c == '_') {
-                    break;
+        let try_input = rest;
+        
+        // 1. Array index
+        if let Ok((r1, _)) = ws(char::<&str, nom::error::Error<&str>>('['))(try_input) {
+            if let Ok((r2, idx)) = parse_expr(r1) {
+                if let Ok((r3, _)) = ws(char::<&str, nom::error::Error<&str>>(']'))(r2) {
+                    expr = Expr::Index(Box::new(expr), Box::new(idx));
+                    rest = r3;
+                    continue;
                 }
-                let index: usize = idx.parse().unwrap_or(0);
-                expr = Expr::TupleIndex(Box::new(expr), index);
-                input = rest2;
-                continue;
             }
         }
+        
+        // 2. Dot access (tuple index or method call)
+        if let Ok((r1, _)) = char::<&str, nom::error::Error<&str>>('.')(try_input) {
+            if let Ok((r2, idx)) = digit1::<&str, nom::error::Error<&str>>(r1) {
+                if !r2.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+                    let index: usize = idx.parse().unwrap_or(0);
+                    expr = Expr::TupleIndex(Box::new(expr), index);
+                    rest = r2;
+                    continue;
+                }
+            }
+            if let Ok((r2, field_name)) = identifier(r1) {
+                if let Ok((r3, _)) = ws(char::<&str, nom::error::Error<&str>>('('))(r2) {
+                    if let Ok((r4, args)) = separated_list0(ws(char(',')), parse_expr)(r3) {
+                        if let Ok((r5, _)) = ws(char::<&str, nom::error::Error<&str>>(')'))(r4) {
+                            expr = Expr::MethodCall(Box::new(expr), field_name, args);
+                            rest = r5;
+                            continue;
+                        }
+                    }
+                } else {
+                    // Field Access
+                    expr = Expr::FieldAccess(Box::new(expr), field_name);
+                    rest = r2;
+                    continue;
+                }
+            }
+        }
+        
+        // 3. Try operator (?)
+        if let Ok((r1, _)) = char::<&str, nom::error::Error<&str>>('?')(try_input) {
+            expr = Expr::Try(Box::new(expr));
+            rest = r1;
+            continue;
+        }
+        
         break;
     }
-    Ok((input, expr))
+    Ok((rest, expr))
 }
 
 // ─── Operatör Öncelik Hiyerarşisi (düşükten yükseğe) ───────────
@@ -410,13 +476,23 @@ fn parse_and(input: &str) -> IResult<&str, Expr> {
     Ok((input, left))
 }
 
-fn parse_expr(input: &str) -> IResult<&str, Expr> {
+fn parse_or(input: &str) -> IResult<&str, Expr> {
     let (input, mut left) = parse_and(input)?;
     let (input, ops) = many0(pair(ws(tag("||")), parse_and))(input)?;
     for (_, right) in ops {
         left = Expr::Binary(Box::new(left), BinaryOp::Or, Box::new(right));
     }
     Ok((input, left))
+}
+
+fn parse_expr(input: &str) -> IResult<&str, Expr> {
+    let (input, left) = parse_or(input)?;
+    if let Ok((input_after_catch, _)) = ws(kw("catch"))(input) {
+        let (input_final, right) = parse_expr(input_after_catch)?;
+        Ok((input_final, Expr::Catch(Box::new(left), Box::new(right))))
+    } else {
+        Ok((input, left))
+    }
 }
 
 // ─── Statement Parçalayıcıları ──────────────────────────────────
@@ -429,8 +505,66 @@ fn parse_const(input: &str) -> IResult<&str, Statement> {
     map(tuple((ws(kw("const")), identifier, ws(char('=')), parse_expr)), |(_, n, _, v)| Statement::Const { name: n, value: v })(input)
 }
 
+fn parse_assign_op(input: &str) -> IResult<&str, AssignOp> {
+    alt((
+        value(AssignOp::AddAssign, tag("+=")),
+        value(AssignOp::SubAssign, tag("-=")),
+        value(AssignOp::MulAssign, tag("*=")),
+        value(AssignOp::DivAssign, tag("/=")),
+        value(AssignOp::ModAssign, tag("%=")),
+        value(AssignOp::Assign, tag("=")),
+    ))(input)
+}
+
 fn parse_assign(input: &str) -> IResult<&str, Statement> {
-    map(tuple((identifier, ws(char('=')), parse_expr)), |(n, _, v)| Statement::Assign { name: n, value: v })(input)
+    map(tuple((identifier, ws(parse_assign_op), parse_expr)), |(n, op, v)| Statement::Assign { name: n, op, value: v })(input)
+}
+
+fn parse_index_assign(input: &str) -> IResult<&str, Statement> {
+    map(tuple((identifier, ws(char('[')), parse_expr, ws(char(']')), ws(parse_assign_op), parse_expr)), 
+    |(n, _, idx, _, op, v)| Statement::IndexAssign { name: n, index: idx, op, value: v })(input)
+}
+
+fn parse_string_literal(input: &str) -> IResult<&str, String> {
+    let (input, _) = char('"')(input)?;
+    let (input, s) = take_while(|c| c != '"')(input)?;
+    let (input, _) = char('"')(input)?;
+    Ok((input, s.to_string()))
+}
+
+fn parse_pattern(input: &str) -> IResult<&str, Pattern> {
+    ws(alt((
+        map(char('_'), |_| Pattern::Wildcard),
+        map(float_number, |f| Pattern::Literal(Literal::Float(f))),
+        map(number, |n| Pattern::Literal(Literal::Int(n))),
+        map(char_literal, |c| Pattern::Literal(Literal::Char(c))),
+        map(parse_string_literal, |s| Pattern::Literal(Literal::Str(s))),
+        map(kw("true"), |_| Pattern::Literal(Literal::Bool(true))),
+        map(kw("false"), |_| Pattern::Literal(Literal::Bool(false))),
+        map(identifier, |n| Pattern::Identifier(n))
+    )))(input)
+}
+
+fn parse_match_arm(input: &str) -> IResult<&str, MatchArm> {
+    map(tuple((
+        parse_pattern,
+        ws(tag("=>")),
+        alt((
+            map(delimited(ws(char('{')), parse_block_content, ws(char('}'))), |stmts| Block { statements: stmts }),
+            map(parse_statement, |stmt| Block { statements: vec![stmt] })
+        )),
+        opt(ws(char(',')))
+    )), |(pattern, _, body, _)| MatchArm { pattern, body })(input)
+}
+
+fn parse_match(input: &str) -> IResult<&str, Statement> {
+    map(tuple((
+        ws(kw("match")),
+        parse_expr,
+        ws(char('{')),
+        many0(parse_match_arm),
+        ws(char('}'))
+    )), |(_, expr, _, arms, _)| Statement::Match { expr, arms })(input)
 }
 
 fn parse_return(input: &str) -> IResult<&str, Statement> {
@@ -481,14 +615,14 @@ fn parse_validate(input: &str) -> IResult<&str, Statement> {
 }
 
 fn parse_statement(input: &str) -> IResult<&str, Statement> {
-    alt((parse_let, parse_const, parse_if, parse_while, parse_for, parse_scope, parse_validate, parse_break, parse_continue, parse_assign, parse_return, map(terminated(parse_expr, opt(ws(char(';')))), |e| Statement::ExprStmt(e))))(input)
+    alt((parse_let, parse_const, parse_if, parse_while, parse_for, parse_scope, parse_validate, parse_match, parse_break, parse_continue, parse_index_assign, parse_assign, parse_return, map(terminated(parse_expr, opt(ws(char(';')))), |e| Statement::ExprStmt(e))))(input)
 }
 
 fn parse_block_content(input: &str) -> IResult<&str, Vec<Statement>> { many0(ws(parse_statement))(input) }
 
 // ─── Tip Sistemi ────────────────────────────────────────────────
 
-fn parse_type(input: &str) -> IResult<&str, TypeRef> {
+fn parse_base_type(input: &str) -> IResult<&str, TypeRef> {
     ws(alt((
         map(tag("Untrusted"), |_| TypeRef::Untrusted),
         map(tag("i64"), |_| TypeRef::Integer),
@@ -503,14 +637,37 @@ fn parse_type(input: &str) -> IResult<&str, TypeRef> {
             separated_list0(ws(char(',')), parse_type),
             ws(char(')'))
         ), |types| if types.len() == 1 { types.into_iter().next().unwrap() } else { TypeRef::Tuple(types) }),
-        map(identifier, |s| TypeRef::Custom(s))
+        map(alt((path_identifier, identifier)), |s| TypeRef::Custom(s))
     )))(input)
+}
+
+fn parse_type(input: &str) -> IResult<&str, TypeRef> {
+    let (input, base) = parse_base_type(input)?;
+    let (input, has_bang) = opt(ws(char('!')))(input)?;
+    if has_bang.is_some() {
+        Ok((input, TypeRef::Result(Box::new(base))))
+    } else {
+        Ok((input, base))
+    }
 }
 
 // ─── Fonksiyon Tanımlayıcı ─────────────────────────────────────
 
+fn parse_attribute(input: &str) -> IResult<&str, Attribute> {
+    map(tuple((
+        ws(char('@')),
+        ws(identifier),
+        opt(delimited(
+            ws(char('(')),
+            separated_list0(ws(char(',')), parse_string_literal),
+            ws(char(')'))
+        ))
+    )), |(_, name, args)| Attribute { name, args: args.unwrap_or_default() })(input)
+}
+
 fn parse_function(input: &str) -> IResult<&str, FunctionDef> {
     map(tuple((
+        many0(ws(parse_attribute)),
         ws(alt((
             map(alt((kw("deterministic"), kw("det"))), |_| Purity::Deterministic),
             map(alt((kw("nondeterministic"), kw("nondet"))), |_| Purity::Nondeterministic)
@@ -520,9 +677,37 @@ fn parse_function(input: &str) -> IResult<&str, FunctionDef> {
         ws(char(')')), 
         opt(preceded(ws(tag("->")), parse_type)), 
         ws(char('{')), parse_block_content, ws(char('}'))
-    )), |(p, _, n, _, params, _, ret, _, stmts, _)| FunctionDef { name: n, purity: p, params, return_type: ret.map(|r| r).unwrap_or(TypeRef::Void), body: Block { statements: stmts } })(input)
+    )), |(attrs, p, _, n, _, params, _, ret, _, stmts, _)| FunctionDef { attributes: attrs, name: n, purity: p, params, return_type: ret.map(|r| r).unwrap_or(TypeRef::Void), body: Block { statements: stmts } })(input)
 }
 
-pub fn parse_program(input: &str) -> IResult<&str, Vec<FunctionDef>> {
-    many1(ws(parse_function))(input)
+fn parse_struct_def(input: &str) -> IResult<&str, StructDef> {
+    map(tuple((
+        ws(kw("struct")),
+        ws(identifier),
+        ws(char('{')),
+        separated_list0(ws(char(',')), map(tuple((
+            ws(identifier), ws(char(':')), parse_type
+        )), |(n, _, t)| Param { name: n, param_type: t })),
+        opt(ws(char(','))),
+        ws(char('}'))
+    )), |(_, name, _, fields, _, _)| StructDef { name, fields })(input)
+}
+
+fn parse_import_def(input: &str) -> IResult<&str, Vec<String>> {
+    map(tuple((
+        ws(kw("import")),
+        separated_list1(char('.'), ws(identifier))
+    )), |(_, path)| path)(input)
+}
+
+fn parse_top_level(input: &str) -> IResult<&str, TopLevel> {
+    alt((
+        map(parse_function, TopLevel::Function),
+        map(parse_struct_def, TopLevel::Struct),
+        map(parse_import_def, TopLevel::Import),
+    ))(input)
+}
+
+pub fn parse_program(input: &str) -> IResult<&str, Vec<TopLevel>> {
+    many1(ws(parse_top_level))(input)
 }

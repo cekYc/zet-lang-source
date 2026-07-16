@@ -4,16 +4,26 @@
 
 ### The language that refuses to compile code it doesn't trust.
 
-[![Version](https://img.shields.io/badge/v0.2.0-orange?style=flat-square&label=version)]()
+[![Version](https://img.shields.io/badge/v0.4.0-orange?style=flat-square&label=version)]()
 [![License](https://img.shields.io/badge/CC_BY--NC--SA_4.0-red?style=flat-square&label=license)]()
 [![Written In](https://img.shields.io/badge/Rust-black?style=flat-square&logo=rust)]()
 [![Platform](https://img.shields.io/badge/Windows_x64-0078D6?style=flat-square&logo=windows)]()
 
 **Compile-time taint analysis · Native speed · Structured concurrency · Zero runtime overhead**
 
-[Quick Start](#-quick-start) · [Why Zet?](#-why-zet) · [Language Tour](#-language-tour) · [Benchmarks](#-benchmarks) · [Docs](DOCS.md)
+[Quick Start](#-quick-start) · [Why Zet?](#-why-zet) · [Language Tour](#-language-tour) · [Benchmarks](#-benchmarks) · [Docs](DOCS.md) · [Philosophy](philosophy.md)
 
 </div>
+
+---
+
+### What's New in v0.4?
+- **Backend First-Class Features**: Automatic HTTP Routing (`@get`, `@post`), Zero-Trust SQLite DB integration.
+- **Advanced Error Handling**: `T!` error types, `catch` fallback, and `?` propagation operators.
+- **Language Server Protocol (LSP)**: Integrated LSP prototype (`zet-compiler --lsp`) with real-time taint analysis and scope diagnostics.
+- **Module System**: `import` system with multi-file project support (`std.http`, `std.db`).
+- **Data Structures & Syntax**: Custom structs, array indexing, array mutations, pattern matching (`match`), and quick assignments (`+=`, `-=`).
+
 
 ---
 
@@ -277,9 +287,9 @@ src/
 - [x] Structured concurrency (`scope` + `spawn` + `JoinHandle`)
 - [x] HTTP client, JSON parsing, console I/O
 - [x] Native performance (Fibonacci-40 in ~240ms)
-- [ ] Pattern matching
-- [ ] Custom struct types
-- [ ] Module system & imports
+- [x] Pattern matching
+- [x] Custom struct types
+- [x] Module system & imports
 - [ ] Linux / macOS support
 - [ ] LSP for editor integration
 - [ ] Package manager

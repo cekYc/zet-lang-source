@@ -52,6 +52,10 @@ impl DeterminismAnalyzer {
             Statement::Let(l) => Self::is_expr_pure(&l.value, symbols),
             Statement::Const { value, .. } => Self::is_expr_pure(value, symbols),
             Statement::Assign { value, .. } => Self::is_expr_pure(value, symbols),
+            Statement::IndexAssign { index, value, .. } => Self::is_expr_pure(index, symbols) && Self::is_expr_pure(value, symbols),
+            Statement::Match { expr, arms } => {
+                Self::is_expr_pure(expr, symbols) && arms.iter().all(|arm| Self::is_block_pure(&arm.body, symbols))
+            }
             Statement::If { condition, then_block, else_block } => {
                 Self::is_expr_pure(condition, symbols) 
                 && Self::is_block_pure(then_block, symbols) 
@@ -103,7 +107,16 @@ impl DeterminismAnalyzer {
             Expr::JsonField(source, _) => Self::is_expr_pure(source, symbols),
             Expr::ArrayLiteral(elems) => elems.iter().all(|e| Self::is_expr_pure(e, symbols)),
             Expr::Index(arr, idx) => Self::is_expr_pure(arr, symbols) && Self::is_expr_pure(idx, symbols),
-            Expr::Spawn(_) | Expr::Await(_) | Expr::Infra(_) => false,
+            Expr::MethodCall(obj, _, args) => {
+                Self::is_expr_pure(obj, symbols) && args.iter().all(|a| Self::is_expr_pure(a, symbols))
+            }
+            Expr::StructLiteral(_, fields) => {
+                fields.iter().all(|(_, e)| Self::is_expr_pure(e, symbols))
+            }
+            Expr::FieldAccess(obj, _) => Self::is_expr_pure(obj, symbols),
+            Expr::Spawn(_) | Expr::Await(_) | Expr::Infra(_) | Expr::InlineRust(_) => false,
+            Expr::Try(e) => Self::is_expr_pure(e, symbols),
+            Expr::Catch(e, fallback) => Self::is_expr_pure(e, symbols) && Self::is_expr_pure(fallback, symbols),
         }
     }
 
@@ -121,6 +134,17 @@ impl DeterminismAnalyzer {
             Statement::Let(l) => Self::check_call_in_expr(&l.value, symbols),
             Statement::Const { value, .. } => Self::check_call_in_expr(value, symbols),
             Statement::Assign { value, .. } => Self::check_call_in_expr(value, symbols),
+            Statement::IndexAssign { index, value, .. } => {
+                Self::check_call_in_expr(index, symbols)?;
+                Self::check_call_in_expr(value, symbols)
+            }
+            Statement::Match { expr, arms } => {
+                Self::check_call_in_expr(expr, symbols)?;
+                for arm in arms {
+                    Self::check_call_keyword(&arm.body, symbols)?;
+                }
+                Ok(())
+            }
             Statement::If { condition, then_block, else_block } => {
                 Self::check_call_in_expr(condition, symbols)?;
                 Self::check_call_keyword(then_block, symbols)?;
@@ -185,6 +209,7 @@ impl DeterminismAnalyzer {
             }
             Expr::TupleIndex(expr, _) => Self::check_call_in_expr(expr, symbols),
             Expr::Spawn(inner) => Self::check_call_in_expr(inner, symbols),
+            Expr::InlineRust(_) => Ok(()),
             Expr::Await(inner) => Self::check_call_in_expr(inner, symbols),
             Expr::Infra(call) => {
                 for arg in &call.args { Self::check_call_in_expr(arg, symbols)?; }
@@ -198,6 +223,25 @@ impl DeterminismAnalyzer {
             Expr::Index(arr, idx) => {
                 Self::check_call_in_expr(arr, symbols)?;
                 Self::check_call_in_expr(idx, symbols)
+            }
+            Expr::MethodCall(obj, _, args) => {
+                Self::check_call_in_expr(obj, symbols)?;
+                for a in args {
+                    Self::check_call_in_expr(a, symbols)?;
+                }
+                Ok(())
+            }
+            Expr::StructLiteral(_, fields) => {
+                for (_, e) in fields {
+                    Self::check_call_in_expr(e, symbols)?;
+                }
+                Ok(())
+            }
+            Expr::FieldAccess(obj, _) => Self::check_call_in_expr(obj, symbols),
+            Expr::Try(e) => Self::check_call_in_expr(e, symbols),
+            Expr::Catch(e, fallback) => {
+                Self::check_call_in_expr(e, symbols)?;
+                Self::check_call_in_expr(fallback, symbols)
             }
             _ => Ok(()),
         }

@@ -1,0 +1,10 @@
+det fn main() -> Void {
+    let arr = [1, 2, 3]
+    println("Ilk eleman: " + arr[0])
+    
+    arr[0] = 99
+    println("Mutasyon sonrasi ilk eleman: " + arr[0])
+    
+    arr.push(100)
+    println("Push sonrasi dorduncu eleman: " + arr[3])
+}

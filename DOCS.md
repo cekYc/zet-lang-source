@@ -1,4 +1,4 @@
-# 📘 Zet Lang Resmi Dökümantasyonu (v0.3)
+# 📘 Zet Lang Resmi Dökümantasyonu (v0.4)
 
 Zet Lang'e hoş geldiniz. Bu dökümantasyon, dilin sözdizimini (syntax), temel konseptlerini, güvenlik modelini ve standart kütüphanesini içerir.
 
@@ -14,6 +14,7 @@ Zet Lang'e hoş geldiniz. Bu dökümantasyon, dilin sözdizimini (syntax), temel
 6. [Eşzamanlılık (Concurrency & Scope)](#6-eşzamanlılık-concurrency--scope)
 7. [Standart Kütüphane (Stdlib)](#7-standart-kütüphane-stdlib)
 8. [v0.3 Yeni Özellikler](#8-v03-yeni-özellikler)
+9. [v0.4 Yeni Özellikler (Hata Yönetimi ve LSP)](#9-v04-yeni-özellikler-hata-yönetimi-ve-lsp)
 
 ---
 
@@ -414,3 +415,67 @@ let ortadaki = matris[1][1]   // 5
 | 9 | `*` `/` `%` | Çarpma, Bölme, Modulo |
 | 10 | `!` `-` (unary) | Tekil operatörler |
 | 11 | `()` `[]` `.N` | Gruplama, İndeks, Tuple erişimi |
+
+---
+
+## 9. v0.4 Yeni Özellikler (Hata Yönetimi ve LSP)
+
+### 9.1 Hata Yönetimi (`Result` ve `T!`)
+
+Fonksiyonların hata fırlatabileceğini belirtmek için tip sonuna `!` eklenir. `error("mesaj")` ile hata fırlatılır.
+
+```zet
+nondet fn bolme(a: i64, b: i64) -> i64! {
+    if b == 0 {
+        return error("Sıfıra bölme hatası!")
+    }
+    return a / b
+}
+```
+
+### 9.2 `?` Operatörü ile Hata Aktarma (Propagation)
+
+`?` operatörü, hata oluşursa anında fonksiyonun geri dönmesini ve hatanın bir üst katmana iletilmesini sağlar.
+
+```zet
+nondet fn islem() -> i64! {
+    let sonuc = bolme(10, 0)? // Hata gelirse 'islem' de anında aynı hatayı döner
+    return sonuc + 5
+}
+```
+
+### 9.3 `catch` ile Hata Yakalama
+
+`catch` operatörü, hata oluştuğunda sistemin çökmesini veya hatanın iletilmesini engelleyerek varsayılan (fallback) bir değer dönmesini sağlar.
+
+```zet
+nondet fn guvenli_islem() -> i64 {
+    let sonuc = bolme(10, 0) catch 999
+    return sonuc // Hata fırlatıldığı için 999 olur
+}
+```
+
+### 9.4 Backend First-Class Özellikleri (Router)
+
+Artık doğrudan dile gömülü olarak HTTP router oluşturabilirsiniz. Sadece `std.http` modülünü projenize ekleyip `@get` veya `@post` kullanmanız yeterlidir. `validate` blokları Zero-Trust modeli ile ağdan gelen datayı denetler.
+
+```zet
+import std.http
+
+@post("/kullanici/ekle")
+nondet fn kullanici_ekle(payload: Untrusted) -> String {
+    validate payload {
+        success: {
+            let ad = json(payload, "ad")
+            return "Başarıyla eklendi: " + ad
+        }
+        fail: {
+            return "Geçersiz JSON Verisi"
+        }
+    }
+}
+```
+
+### 9.5 Language Server Protocol (LSP)
+
+IDE/Editor entegrasyonu için Zet Derleyicisi artık bir LSP sunucusu barındırmaktadır. `zet-compiler --lsp` komutu ile dil sunucusu modunda başlatılabilir. Dosyadaki kodları anlık olarak tarar, sözdizimi, scope hataları ve **Zero Trust (Taint) İhlallerini** anlık olarak editörünüze diagnostic olarak gönderir.

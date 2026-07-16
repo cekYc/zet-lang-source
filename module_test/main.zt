@@ -1,0 +1,9 @@
+import utils.math
+
+nondet fn main() {
+    let n1 = utils::math::Nokta { x: 10, y: 20 }
+    println("Nokta X: ${n1.x}, Nokta Y: ${n1.y}")
+    
+    let res = utils::math::topla(n1.x, n1.y)
+    println("Toplam: ${res}")
+}
